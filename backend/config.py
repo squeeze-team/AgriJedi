@@ -6,6 +6,10 @@ No structural rewrite needed.
 """
 
 # ─── Global settings ──────────────────────────────────────────────
+# Set to True to skip all external API calls and use bundled data only.
+# This avoids timeouts when FAOSTAT / World Bank / NASA POWER are down.
+USE_BUNDLED_DATA = True
+
 COUNTRY = "France"
 COUNTRY_ISO3 = "FRA"
 FAOSTAT_AREA_CODE = 68  # France

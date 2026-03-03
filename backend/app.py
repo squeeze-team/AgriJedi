@@ -8,6 +8,9 @@ Endpoints:
   GET /predict/yield           → yield anomaly prediction
   GET /predict/price           → 3-month price direction forecast
   GET /crops                   → available crop configs
+  GET /prices/history          → monthly price time-series
+  GET /yield/history           → annual yield time-series
+  GET /ndvi/stats              → NDVI summary statistics
 """
 
 from fastapi import FastAPI, Query, HTTPException
@@ -19,8 +22,8 @@ from config import CROP_CONFIG, DEFAULT_CROP, FRANCE_BBOX
 from services.s2_pc import get_ndvi_stats, get_s2_overlay_png
 from services.clms_wms import get_crop_type_overlay
 from services.weather_power import get_weather_monthly
-from services.faostat import get_yield_history
-from services.prices_worldbank import get_price_history
+from services.faostat import get_yield_history, compute_yield_features
+from services.prices_worldbank import get_price_history, compute_price_features
 
 from features.build_features import build_feature_vector
 from features.models import predict_yield, predict_price
@@ -129,6 +132,66 @@ async def price_prediction(
     features = build_feature_vector(crop=crop)
     result = predict_price(features, crop=crop)
     return JSONResponse(content=result)
+
+
+# ─── Price history ───────────────────────────────────────────────
+@app.get("/prices/history")
+async def price_history(
+    crop: str = Query(default=DEFAULT_CROP),
+):
+    """Return monthly commodity price time-series for the given crop."""
+    if crop not in CROP_CONFIG:
+        raise HTTPException(400, f"Unknown crop '{crop}'. Available: {list(CROP_CONFIG)}")
+
+    df = get_price_history(crop)
+    if df.empty:
+        return JSONResponse(content={"dates": [], "prices": []})
+
+    return JSONResponse(content={
+        "crop": crop,
+        "dates": df["date"].dt.strftime("%Y-%m").tolist(),
+        "prices": df["price"].round(2).tolist(),
+        "unit": "USD/mt",
+    })
+
+
+# ─── Yield history ──────────────────────────────────────────────
+@app.get("/yield/history")
+async def yield_history(
+    crop: str = Query(default=DEFAULT_CROP),
+):
+    """Return annual yield time-series for the given crop in France."""
+    if crop not in CROP_CONFIG:
+        raise HTTPException(400, f"Unknown crop '{crop}'. Available: {list(CROP_CONFIG)}")
+
+    df = get_yield_history(crop)
+    if df.empty:
+        return JSONResponse(content={"years": [], "yields": []})
+
+    return JSONResponse(content={
+        "crop": crop,
+        "country": "France",
+        "years": df["year"].tolist(),
+        "yields": df["yield_ton_ha"].round(3).tolist(),
+        "unit": "ton/ha",
+    })
+
+
+# ─── NDVI statistics ────────────────────────────────────────────
+@app.get("/ndvi/stats")
+async def ndvi_stats(
+    crop: str = Query(default=DEFAULT_CROP),
+    date: str = Query(
+        default="2024-04-01/2024-07-01",
+        description="Date range for NDVI calculation",
+    ),
+):
+    """Return NDVI summary statistics (with fallback to bundled data)."""
+    if crop not in CROP_CONFIG:
+        raise HTTPException(400, f"Unknown crop '{crop}'. Available: {list(CROP_CONFIG)}")
+
+    stats = get_ndvi_stats(date_range=date, crop=crop)
+    return JSONResponse(content={"crop": crop, **stats})
 
 
 # ─── Run ─────────────────────────────────────────────────────────

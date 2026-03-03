@@ -54,13 +54,27 @@ legendDiv.addTo(map);
 let weatherChart = null;
 let priceChart = null;
 
+function getLast24MonthRange() {
+  const now = new Date();
+  const end = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+  const start = new Date(now);
+  start.setMonth(start.getMonth() - 24);
+  const startStr = `${start.getFullYear()}${String(start.getMonth() + 1).padStart(2, "0")}01`;
+  return { start: startStr, end };
+}
+
 async function loadWeatherChart() {
   const ctx = document.getElementById("weatherChart").getContext("2d");
+  const { start, end } = getLast24MonthRange();
 
   try {
-    const resp = await fetch(`${API_BASE}/weather/france?start=20230101&end=20241231`);
+    const resp = await fetch(`${API_BASE}/weather/france?start=${start}&end=${end}`);
     const data = await resp.json();
-    renderWeatherChart(ctx, data);
+    if (data.months && data.months.length > 0) {
+      renderWeatherChart(ctx, data);
+    } else {
+      renderWeatherChart(ctx, demoPrecipData());
+    }
   } catch {
     // Fallback demo data when backend is not running
     renderWeatherChart(ctx, demoPrecipData());
@@ -107,18 +121,27 @@ function renderWeatherChart(ctx, data) {
 }
 
 async function loadPriceChart() {
+  const crop = document.getElementById("cropSelect").value;
   const ctx = document.getElementById("priceChart").getContext("2d");
-  // Use demo data (backend not always available)
-  const months = [];
-  const prices = [];
-  let p = 340;
-  for (let y = 2022; y <= 2024; y++) {
-    for (let m = 1; m <= 12; m++) {
-      months.push(`${y}-${String(m).padStart(2,"0")}`);
-      p += (Math.random() - 0.52) * 15;
-      p = Math.max(200, Math.min(500, p));
-      prices.push(Math.round(p));
+
+  let months, prices, label;
+
+  try {
+    const resp = await fetch(`${API_BASE}/prices/history?crop=${crop}`);
+    const data = await resp.json();
+    if (data.dates && data.dates.length > 0) {
+      months = data.dates;
+      prices = data.prices;
+      label = `${capitalize(crop)} Price (${data.unit || "USD/mt"})`;  
+    } else {
+      throw new Error("empty");
     }
+  } catch {
+    // Fallback demo data
+    const demo = demoPriceData(crop);
+    months = demo.months;
+    prices = demo.prices;
+    label = `${capitalize(crop)} Price (USD/mt) — demo`;
   }
 
   if (priceChart) priceChart.destroy();
@@ -127,7 +150,7 @@ async function loadPriceChart() {
     data: {
       labels: months,
       datasets: [{
-        label: "Wheat Price (USD/mt)",
+        label,
         data: prices,
         borderColor: "#16a34a",
         backgroundColor: "rgba(22,163,74,0.08)",
@@ -142,6 +165,8 @@ async function loadPriceChart() {
     },
   });
 }
+
+function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
 // ─── Predictions ─────────────────────────────────────────────────
 async function runPredictions() {
@@ -214,41 +239,82 @@ function showPrice(d) {
 
 // ─── Demo / fallback data ────────────────────────────────────────
 function demoPrecipData() {
+  // Bundled monthly weather matching backend _BUNDLED_WEATHER_MONTHLY
+  const data = {
+    months: [
+      "2024-01","2024-02","2024-03","2024-04","2024-05","2024-06",
+      "2024-07","2024-08","2024-09","2024-10","2024-11","2024-12",
+      "2025-01","2025-02","2025-03","2025-04","2025-05","2025-06",
+      "2025-07","2025-08","2025-09","2025-10","2025-11","2025-12",
+    ],
+    PRECTOTCORR: [58.0,45.5,50.2,68.7,78.3,38.1,28.5,32.0,52.4,72.8,68.5,74.2,
+                  55.8,42.0,60.1,70.5,62.0,40.2,30.5,35.8,55.0,76.0,72.5,68.0],
+    T2M:         [4.8,6.9,9.8,12.5,15.9,19.8,23.2,22.5,18.2,13.4,7.9,5.2,
+                  4.5,5.9,8.7,11.4,14.8,19.5,22.8,21.9,17.8,13.0,8.0,5.5],
+    T2M_MAX:     [11.2,15.3,19.1,23.5,27.0,32.5,37.8,36.2,29.5,22.0,14.8,11.5,
+                  10.8,13.5,17.9,21.8,25.5,31.8,37.2,35.5,28.8,21.5,15.2,11.8],
+  };
+  return data;
+}
+
+function demoPriceData(crop) {
+  // Bundled price series matching backend _BUNDLED_PRICES (real FRED/IMF data for wheat & maize)
+  const series = {
+    wheat:  {data: [326.08,347.50,387.67,406.03,444.16,397.65,321.98,323.02,346.32,353.71,344.33,323.65,
+             320.10,332.41,309.43,312.81,299.44,282.28,278.62,241.41,229.39,216.46,216.00,229.63,
+             226.08,219.24,211.84,208.38,227.43,205.23,183.23,175.51,188.51,197.37,185.73,185.79,
+             190.63,190.10,179.61,174.82,196.84,173.19,165.27,159.31,155.12,157.39,169.20,165.63,169.25]},
+    maize:  {data: [276.72,292.67,335.93,348.51,344.91,335.72,312.68,293.93,312.55,343.55,320.93,302.24,
+             302.84,298.25,284.96,291.18,268.17,266.94,235.27,207.68,223.85,221.90,209.04,207.40,
+             198.76,188.95,190.23,190.90,201.02,191.24,177.77,169.30,183.66,189.59,201.31,202.83,
+             214.36,221.25,207.75,215.57,204.81,195.72,192.45,183.02,196.15,198.02,201.66,205.32,203.90]},
+    grape:  {data: [780,790,805,830,855,870,865,850,840,825,815,810,
+             800,795,785,770,755,740,730,710,695,680,670,665,
+             660,655,650,645,648,655,660,670,685,690,695,700,
+             705,710,715,718,720,725,722,718,712,708,705,710,715]},
+  };
+  const s = series[crop] || series.wheat;
   const months = [];
-  const precip = [];
-  const temp = [];
-  for (let y = 2023; y <= 2024; y++) {
+  let mi = 0;
+  for (let y = 2022; y <= 2026; y++) {
     for (let m = 1; m <= 12; m++) {
-      months.push(`${y}-${String(m).padStart(2,"0")}`);
-      precip.push(Math.round(40 + Math.random() * 80));
-      temp.push(Math.round((5 + 12 * Math.sin((m - 1) / 12 * Math.PI)) * 10) / 10);
+      if (mi >= s.data.length) break;
+      months.push(`${y}-${String(m).padStart(2, "0")}`);
+      mi++;
     }
   }
-  return { months, PRECTOTCORR: precip, T2M: temp, T2M_MAX: temp.map(t => t + 5) };
+  return { months: months.slice(0, s.data.length), prices: s.data };
 }
 
 function demoYieldResult(crop) {
   return {
     crop,
     country: "France",
-    predicted_yield_ton_ha: crop === "wheat" ? 6.85 : crop === "maize" ? 8.92 : 6.20,
-    anomaly_percent: -2.15,
+    predicted_yield_ton_ha: crop === "wheat" ? 6.85 : crop === "maize" ? 8.92 : 6.00,
+    anomaly_percent: crop === "wheat" ? -2.15 : crop === "maize" ? -1.80 : -2.50,
     confidence: 0.75,
     explanation: "Lower rainfall + NDVI anomaly → likely lower yield (demo mode — backend not connected).",
   };
 }
 
 function demoPriceResult(crop) {
+  const prices = { wheat: [255, 268], maize: [212, 222], grape: [775, 790] };
+  const p = prices[crop] || prices.wheat;
   return {
     crop,
     direction: "Up",
     probability: 0.72,
-    price_last_usd_mt: 255,
-    price_forecast_usd_mt: 268,
-    change_percent: 5.1,
+    price_last_usd_mt: p[0],
+    price_forecast_usd_mt: p[1],
+    change_percent: +(((p[1] - p[0]) / p[0]) * 100).toFixed(1),
     explanation: "Lower yield forecast → upward price pressure (demo mode — backend not connected).",
   };
 }
+
+// ─── Crop selector change → reload charts ────────────────────────
+document.getElementById("cropSelect").addEventListener("change", () => {
+  loadPriceChart();
+});
 
 // ─── Init ────────────────────────────────────────────────────────
 loadWeatherChart();
