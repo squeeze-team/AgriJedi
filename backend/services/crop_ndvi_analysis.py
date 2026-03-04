@@ -209,11 +209,12 @@ def _compute_ndvi_matrix(
 # ─── Bundled / demo analysis results ─────────────────────────────
 
 _BUNDLED_ANALYSIS: dict[str, dict] = {
-    # Rhône Valley default
+    # Rhône Valley default — observation window June–September 2025
     "4.67,44.71,4.97,45.01": {
         "bbox": [4.67, 44.71, 4.97, 45.01],
         "item_id": "bundled-demo",
         "date": "2025-07-15T00:00:00Z",
+        "date_range": "2025-06-01/2025-09-01",
         "resolution_px": "400x400",
         "total_classified_pixels": 160000,
         "crops": {
@@ -226,15 +227,23 @@ _BUNDLED_ANALYSIS: dict[str, dict] = {
                 "ndvi_median": 0.36,
                 "ndvi_p25": 0.28,
                 "ndvi_p75": 0.47,
-                "yield_index": 0.85,
-                "yield_index_label": "Below average",
+                # Jun-Sep baseline: (0.55+0.30+0.22+0.20)/4 = 0.318
+                # 0.38 / 0.318 = 1.19 → above baseline (wheat already harvested,
+                # 0.38 reflects good cover-crop or healthy stubble)
+                "yield_index": 1.19,
+                "yield_index_label": "Normal (off-season)",
+                "ndvi_baseline_used": 0.318,
+                "optimal_ndvi_range": [0.70, 0.85],
+                "peak_months": [4, 5],
+                "observation_note": "Wheat is harvested by July in Rhône Valley; summer NDVI reflects stubble, not crop health. For yield assessment, use April-May imagery.",
                 "yield_prediction": {
-                    "predicted_yield_t_ha": 4.98,
+                    "predicted_yield_t_ha": 6.98,
                     "target_year": 2025,
-                    "anomaly_vs_5yr_pct": -15.0,
+                    "anomaly_vs_5yr_pct": 19.0,
                     "method": "agreste_trend_plus_ndvi",
-                    "confidence": 1.0,
-                    "explanation": "Based on Agreste data for Drôme, Isère, Ardèche; 5yr avg 5.86 t/ha; NDVI index 0.85 (−15%)",
+                    "confidence": 0.5,
+                    "confidence_note": "Low confidence: observation is off-season for wheat; index inflated by post-harvest cover",
+                    "explanation": "Based on Agreste data for Drôme, Isère, Ardèche; 5yr avg 5.86 t/ha; NDVI index 1.19 (summer off-season — wheat harvested by July, index reflects stubble not crop vigour)",
                     "avg_5yr": 5.86,
                     "trend": 0.004,
                     "history": {"2020": 5.67, "2021": 5.95, "2022": 6.2, "2023": 5.59, "2024": 5.87},
@@ -250,15 +259,22 @@ _BUNDLED_ANALYSIS: dict[str, dict] = {
                 "ndvi_median": 0.74,
                 "ndvi_p25": 0.66,
                 "ndvi_p75": 0.79,
-                "yield_index": 1.05,
+                # Jun-Sep baseline: (0.55+0.78+0.82+0.65)/4 = 0.70
+                # 0.72 / 0.70 = 1.03 → slightly above average (peak season — meaningful)
+                "yield_index": 1.03,
                 "yield_index_label": "Above average",
+                "ndvi_baseline_used": 0.70,
+                "optimal_ndvi_range": [0.75, 0.90],
+                "peak_months": [7, 8],
+                "observation_note": "Summer is peak season for maize. NDVI of 0.72 is in the good range (optimal 0.75-0.90). Yield index is reliable.",
                 "yield_prediction": {
-                    "predicted_yield_t_ha": 10.11,
+                    "predicted_yield_t_ha": 9.92,
                     "target_year": 2025,
-                    "anomaly_vs_5yr_pct": 5.0,
+                    "anomaly_vs_5yr_pct": 3.0,
                     "method": "agreste_trend_plus_ndvi",
                     "confidence": 1.0,
-                    "explanation": "Based on Agreste data for Drôme, Isère, Ardèche; 5yr avg 9.63 t/ha; NDVI index 1.05 (+5%)",
+                    "confidence_note": "High confidence: peak growing season observation",
+                    "explanation": "Based on Agreste data for Drôme, Isère, Ardèche; 5yr avg 9.63 t/ha; NDVI index 1.03 during peak season (+3%)",
                     "avg_5yr": 9.63,
                     "trend": 0.02,
                     "history": {"2020": 9.3, "2021": 9.5, "2022": 9.8, "2023": 9.9, "2024": 9.65},
@@ -274,15 +290,22 @@ _BUNDLED_ANALYSIS: dict[str, dict] = {
                 "ndvi_median": 0.52,
                 "ndvi_p25": 0.43,
                 "ndvi_p75": 0.60,
-                "yield_index": 0.95,
+                # Jun-Sep baseline: (0.50+0.55+0.56+0.48)/4 = 0.5225
+                # 0.51 / 0.5225 = 0.98 → near average (peak season — meaningful)
+                "yield_index": 0.98,
                 "yield_index_label": "Near average",
+                "ndvi_baseline_used": 0.523,
+                "optimal_ndvi_range": [0.50, 0.65],
+                "peak_months": [7, 8],
+                "observation_note": "Summer is peak season for grapevines. NDVI 0.51 is within optimal range (0.50-0.65). Note: vineyard NDVI is naturally lower than field crops due to inter-row bare soil.",
                 "yield_prediction": {
-                    "predicted_yield_t_ha": 7.13,
+                    "predicted_yield_t_ha": 7.35,
                     "target_year": 2025,
-                    "anomaly_vs_5yr_pct": -5.0,
+                    "anomaly_vs_5yr_pct": -2.0,
                     "method": "agreste_trend_plus_ndvi",
                     "confidence": 1.0,
-                    "explanation": "Based on Agreste data for Drôme, Ardèche; 5yr avg 7.50 t/ha; NDVI index 0.95 (−5%)",
+                    "confidence_note": "High confidence: peak growing season observation",
+                    "explanation": "Based on Agreste data for Drôme, Ardèche; 5yr avg 7.50 t/ha; NDVI index 0.98 during peak season (−2%)",
                     "avg_5yr": 7.50,
                     "trend": -0.01,
                     "history": {"2020": 7.6, "2021": 7.8, "2022": 7.2, "2023": 7.5, "2024": 7.4},
@@ -298,8 +321,14 @@ _BUNDLED_ANALYSIS: dict[str, dict] = {
                 "ndvi_median": 0.33,
                 "ndvi_p25": 0.24,
                 "ndvi_p75": 0.44,
-                "yield_index": 0.80,
-                "yield_index_label": "Below average",
+                # Jun-Sep baseline: (0.48+0.25+0.20+0.18)/4 = 0.278
+                # 0.35 / 0.278 = 1.26 → above baseline (harvested, like wheat)
+                "yield_index": 1.26,
+                "yield_index_label": "Normal (off-season)",
+                "ndvi_baseline_used": 0.278,
+                "optimal_ndvi_range": [0.65, 0.80],
+                "peak_months": [4, 5],
+                "observation_note": "Barley/oats harvested by June-July. Summer NDVI reflects stubble, not crop health.",
             },
             "grassland": {
                 "label": "Temporary + Permanent grassland",
@@ -310,8 +339,13 @@ _BUNDLED_ANALYSIS: dict[str, dict] = {
                 "ndvi_median": 0.59,
                 "ndvi_p25": 0.50,
                 "ndvi_p75": 0.66,
-                "yield_index": None,
-                "yield_index_label": "N/A",
+                # Jun-Sep baseline: (0.60+0.50+0.48+0.50)/4 = 0.52
+                # 0.58 / 0.52 = 1.12 → above average (grassland stays green)
+                "yield_index": 1.12,
+                "yield_index_label": "Above average",
+                "ndvi_baseline_used": 0.52,
+                "optimal_ndvi_range": [0.55, 0.75],
+                "peak_months": [5, 6],
             },
             "other": {
                 "label": "Sunflower, Rapeseed, Vegetables, etc.",
@@ -322,40 +356,216 @@ _BUNDLED_ANALYSIS: dict[str, dict] = {
                 "ndvi_median": 0.42,
                 "ndvi_p25": 0.30,
                 "ndvi_p75": 0.56,
-                "yield_index": None,
-                "yield_index_label": "N/A",
+                # Jun-Sep baseline: (0.62+0.60+0.50+0.38)/4 = 0.525
+                # 0.44 / 0.525 = 0.84 → below average (mixed group, varied phenology)
+                "yield_index": 0.84,
+                "yield_index_label": "Slightly low (off-season)",
+                "ndvi_baseline_used": 0.525,
+                "optimal_ndvi_range": [0.55, 0.80],
+                "peak_months": [6, 7],
             },
         },
     },
 }
 
-# Historical NDVI baselines per group for yield-index computation
-# (5-year mean NDVI during peak growing season — simplified)
+# ─── Per-crop NDVI phenological profiles ─────────────────────────
+# Each crop has different NDVI behaviour depending on the observation
+# month.  The baseline must match the *observation window*, not just a
+# single annual peak, otherwise wheat (harvested by July) looks
+# permanently "below average" when observed in summer.
+#
+# Structure:
+#   group → {
+#       "peak_months": [m, …],        # months of maximum canopy cover
+#       "peak_ndvi":  (lo, hi),        # healthy NDVI range during peak
+#       "summer_ndvi": (lo, hi),       # expected range during Jun-Sep window
+#       "baseline_by_month": {m: val}, # monthly reference baselines
+#       "optimal_range": (lo, hi),     # optimal NDVI the crop *should* reach
+#       "stress_threshold": float,     # below this → definite stress
+#   }
+#
+# Sources: Copernicus HR-VPP phenology, JECAM validation sites, INRAE
+# phenological calendars for France.
+
+_CROP_NDVI_PROFILES: dict[str, dict] = {
+    "wheat": {
+        # Winter wheat: peaks Apr-May (stem elongation → heading)
+        # By July the crop is harvested — low NDVI is NORMAL
+        "peak_months": [4, 5],
+        "peak_ndvi": (0.70, 0.85),
+        "summer_ndvi": (0.20, 0.50),  # stubble / bare soil after harvest
+        "baseline_by_month": {
+            1: 0.25, 2: 0.30, 3: 0.50, 4: 0.72, 5: 0.78,
+            6: 0.55, 7: 0.30, 8: 0.22, 9: 0.20, 10: 0.20, 11: 0.22, 12: 0.24,
+        },
+        "optimal_range": (0.70, 0.85),
+        "stress_threshold": 0.55,   # during peak; summer lows don't count
+    },
+    "maize": {
+        # Maize: peaks Jul-Aug (tasseling → grain fill)
+        # Summer observation window captures the critical growth phase
+        "peak_months": [7, 8],
+        "peak_ndvi": (0.75, 0.90),
+        "summer_ndvi": (0.65, 0.85),
+        "baseline_by_month": {
+            1: 0.10, 2: 0.10, 3: 0.12, 4: 0.15, 5: 0.30, 6: 0.55,
+            7: 0.78, 8: 0.82, 9: 0.65, 10: 0.35, 11: 0.15, 12: 0.10,
+        },
+        "optimal_range": (0.75, 0.90),
+        "stress_threshold": 0.55,
+    },
+    "grape": {
+        # Vineyards: peaks Jul-Aug but row-planted → mixed signal with bare soil
+        # Canopy NDVI is lower than field crops due to inter-row gaps
+        "peak_months": [7, 8],
+        "peak_ndvi": (0.45, 0.65),
+        "summer_ndvi": (0.40, 0.65),
+        "baseline_by_month": {
+            1: 0.18, 2: 0.18, 3: 0.22, 4: 0.32, 5: 0.42, 6: 0.50,
+            7: 0.55, 8: 0.56, 9: 0.48, 10: 0.35, 11: 0.22, 12: 0.18,
+        },
+        "optimal_range": (0.50, 0.65),
+        "stress_threshold": 0.30,
+    },
+    "other_cereal": {
+        # Barley / oats / rye: similar to wheat, slightly earlier maturity
+        "peak_months": [4, 5],
+        "peak_ndvi": (0.65, 0.80),
+        "summer_ndvi": (0.18, 0.45),
+        "baseline_by_month": {
+            1: 0.22, 2: 0.28, 3: 0.48, 4: 0.68, 5: 0.72,
+            6: 0.48, 7: 0.25, 8: 0.20, 9: 0.18, 10: 0.18, 11: 0.20, 12: 0.22,
+        },
+        "optimal_range": (0.65, 0.80),
+        "stress_threshold": 0.50,
+    },
+    "grassland": {
+        # Permanent + temporary grassland: stays green most of the year
+        "peak_months": [5, 6],
+        "peak_ndvi": (0.55, 0.75),
+        "summer_ndvi": (0.40, 0.70),
+        "baseline_by_month": {
+            1: 0.30, 2: 0.32, 3: 0.42, 4: 0.55, 5: 0.62, 6: 0.60,
+            7: 0.50, 8: 0.48, 9: 0.50, 10: 0.45, 11: 0.35, 12: 0.30,
+        },
+        "optimal_range": (0.55, 0.75),
+        "stress_threshold": 0.30,
+    },
+    "other": {
+        # Sunflower, rapeseed, vegetables — varied; use conservative defaults
+        "peak_months": [6, 7],
+        "peak_ndvi": (0.55, 0.80),
+        "summer_ndvi": (0.35, 0.70),
+        "baseline_by_month": {
+            1: 0.18, 2: 0.20, 3: 0.30, 4: 0.45, 5: 0.55, 6: 0.62,
+            7: 0.60, 8: 0.50, 9: 0.38, 10: 0.25, 11: 0.20, 12: 0.18,
+        },
+        "optimal_range": (0.55, 0.80),
+        "stress_threshold": 0.30,
+    },
+}
+
+# Keep the old flat dict for backward compat (used in _build_analysis)
 _NDVI_BASELINES: dict[str, float] = {
-    "wheat": 0.45,
-    "maize": 0.68,
-    "grape": 0.53,
-    "other_cereal": 0.43,
-    "grassland": 0.55,
-    "other_fruit": 0.50,
-    "other": 0.45,
+    k: v["baseline_by_month"][7]  # July default for summer observation
+    for k, v in _CROP_NDVI_PROFILES.items()
 }
 
 
-# ─── Main analysis function ──────────────────────────────────────
+def _get_monthly_baseline(group: str, date_range: str) -> float:
+    """
+    Return the appropriate NDVI baseline for *group* given the observation
+    *date_range*.  Averages the monthly baselines across all months in the
+    observation window.
+    """
+    profile = _CROP_NDVI_PROFILES.get(group)
+    if profile is None:
+        return 0.50
 
-def _yield_index_label(idx: float | None) -> str:
-    if idx is None:
-        return "N/A"
-    if idx >= 1.10:
-        return "Well above average"
-    if idx >= 1.02:
-        return "Above average"
-    if idx >= 0.98:
-        return "Near average"
-    if idx >= 0.90:
-        return "Below average"
-    return "Well below average"
+    # Parse months from date_range like "2025-06-01/2025-09-01"
+    try:
+        parts = date_range.split("/")
+        start_month = int(parts[0].split("-")[1])
+        end_month = int(parts[-1].split("-")[1])
+        months = list(range(start_month, end_month + 1))
+        if not months:
+            months = [7]  # fallback
+    except Exception:
+        months = [7]
+
+    baselines = [profile["baseline_by_month"].get(m, 0.50) for m in months]
+    return sum(baselines) / len(baselines)
+
+
+def _yield_index_for_crop(
+    group: str, ndvi_mean: float, date_range: str
+) -> tuple[float | None, str]:
+    """
+    Compute a phenology-aware yield index for a crop group.
+
+    Returns (yield_index, label_string).
+
+    The index is the ratio of observed NDVI to the expected monthly
+    baseline.  The label uses *crop-specific* thresholds because e.g.
+    wheat post-harvest NDVI of 0.30 is normal, while for maize during
+    peak season the same value would be catastrophic.
+    """
+    profile = _CROP_NDVI_PROFILES.get(group)
+    if profile is None:
+        return None, "N/A"
+
+    baseline = _get_monthly_baseline(group, date_range)
+    if baseline <= 0:
+        return None, "N/A"
+
+    raw_index = round(ndvi_mean / baseline, 2)
+
+    # Determine whether the observation falls during peak or off-season
+    try:
+        parts = date_range.split("/")
+        obs_months = set(range(
+            int(parts[0].split("-")[1]),
+            int(parts[-1].split("-")[1]) + 1,
+        ))
+    except Exception:
+        obs_months = {7}
+
+    peak_months = set(profile["peak_months"])
+    is_peak_season = bool(obs_months & peak_months)
+
+    # ── Crop-specific labelling ──────────────────────────────────
+    opt_lo, opt_hi = profile["optimal_range"]
+    stress_th = profile["stress_threshold"]
+
+    if not is_peak_season:
+        # Off-season: the NDVI ratio is less meaningful for yield
+        # Still report the index, but label accordingly
+        if raw_index >= 0.95:
+            label = "Normal (off-season)"
+        elif raw_index >= 0.80:
+            label = "Slightly low (off-season)"
+        else:
+            label = "Low (off-season; may be post-harvest)"
+    else:
+        # Peak season: NDVI is directly informative
+        if ndvi_mean >= opt_lo:
+            if raw_index >= 1.08:
+                label = "Well above average"
+            elif raw_index >= 1.02:
+                label = "Above average"
+            else:
+                label = "Near average (good canopy)"
+        elif ndvi_mean >= stress_th:
+            if raw_index >= 0.95:
+                label = "Near average"
+            elif raw_index >= 0.85:
+                label = "Below average"
+            else:
+                label = "Well below average"
+        else:
+            label = "Severe stress"
+
+    return raw_index, label
 
 
 def analyze_crop_ndvi(
@@ -439,8 +649,13 @@ def _build_analysis(
             continue
 
         mean_val = float(np.mean(ndvi_valid))
-        baseline = _NDVI_BASELINES.get(group, 0.50)
-        yield_idx = round(mean_val / baseline, 2) if baseline > 0 else None
+
+        # ── Phenology-aware yield index ──────────────────────────
+        yield_idx, yield_label = _yield_index_for_crop(group, mean_val, date_range)
+
+        # Also store the monthly baseline used so agent can reason about it
+        monthly_baseline = round(_get_monthly_baseline(group, date_range), 3)
+        profile = _CROP_NDVI_PROFILES.get(group, {})
 
         # Find the label(s) for this group
         labels = sorted(set(
@@ -457,7 +672,10 @@ def _build_analysis(
             "ndvi_p25": round(float(np.percentile(ndvi_valid, 25)), 3),
             "ndvi_p75": round(float(np.percentile(ndvi_valid, 75)), 3),
             "yield_index": yield_idx,
-            "yield_index_label": _yield_index_label(yield_idx),
+            "yield_index_label": yield_label,
+            "ndvi_baseline_used": monthly_baseline,
+            "optimal_ndvi_range": list(profile.get("optimal_range", [])),
+            "peak_months": profile.get("peak_months", []),
             "yield_prediction": None,  # filled below
         }
 

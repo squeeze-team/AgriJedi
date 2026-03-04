@@ -400,13 +400,18 @@ async function loadCropAnalysis() {
       if (yp && yp.predicted_yield_t_ha != null) {
         const anomSign = yp.anomaly_vs_5yr_pct >= 0 ? "+" : "";
         const anomColor = yp.anomaly_vs_5yr_pct >= 0 ? "var(--green)" : "var(--red)";
-        const histYears = yp.history ? Object.keys(yp.history).join(", ") : "";
         const histVals  = yp.history ? Object.values(yp.history).join(" → ") : "";
         const depts = yp.departements ? yp.departements.join(", ") : "";
+        const confPct = (yp.confidence * 100).toFixed(0);
+        const confColor = yp.confidence >= 0.8 ? "var(--green)" : yp.confidence >= 0.5 ? "#e67e22" : "var(--red)";
+        const confNote = yp.confidence_note || "";
         yieldPredHtml = `
-          <div style="margin-top:8px;padding:10px 12px;background:#f8fafc;border-radius:8px;border-left:3px solid var(--accent);">
+          <div style="margin-top:8px;padding:10px 12px;background:#f8fafc;border-radius:8px;border-left:3px solid ${confColor};">
             <div style="font-size:13px;font-weight:700;margin-bottom:4px;">
               🌾 ${yp.target_year} Yield Forecast
+              <span style="font-size:11px;font-weight:600;color:${confColor};margin-left:6px;">
+                (${confPct}% confidence)
+              </span>
             </div>
             <div style="font-size:24px;font-weight:800;color:var(--accent);">
               ${yp.predicted_yield_t_ha} t/ha
@@ -421,11 +426,18 @@ async function loadCropAnalysis() {
               History: ${histVals} t/ha
             </div>
             <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
-              Départements: ${depts} | Confidence: ${(yp.confidence * 100).toFixed(0)}%
+              Départements: ${depts}
             </div>
+            ${confNote ? `<div style="font-size:11px;color:${confColor};margin-top:3px;font-style:italic;">⚠ ${confNote}</div>` : ""}
           </div>
         `;
       }
+
+      // Phenology context line
+      const baselineStr = c.ndvi_baseline_used != null ? c.ndvi_baseline_used : "–";
+      const peakStr = c.peak_months ? c.peak_months.map(m => ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][m-1]).join("-") : "–";
+      const optStr = c.optimal_ndvi_range && c.optimal_ndvi_range.length === 2 ? `${c.optimal_ndvi_range[0]}–${c.optimal_ndvi_range[1]}` : "–";
+      const obsNote = c.observation_note || "";
 
       const card = document.createElement("div");
       card.className = "crop-card";
@@ -442,10 +454,14 @@ async function loadCropAnalysis() {
           <dt>NDVI IQR</dt><dd>${c.ndvi_p25} – ${c.ndvi_p75}</dd>
           <dt>Pixels</dt><dd>${c.pixel_count.toLocaleString()}</dd>
         </dl>
+        <div style="font-size:11px;color:var(--text-muted);margin:4px 0; padding:4px 8px; background:#f0f4f8; border-radius:4px;">
+          📅 Peak: ${peakStr} | Baseline: ${baselineStr} | Optimal: ${optStr}
+        </div>
         ${c.yield_index != null
           ? `<span class="yield-badge ${yieldClass}">NDVI index: ${c.yield_index.toFixed(2)} — ${c.yield_index_label}</span>`
           : `<span class="yield-badge" style="background:#f8fafc;color:var(--text-muted);">NDVI index: N/A</span>`
         }
+        ${obsNote ? `<div style="font-size:11px;color:#8b6914;margin-top:4px;padding:4px 8px;background:#fef9e7;border-radius:4px;">💡 ${obsNote}</div>` : ""}
         ${yieldPredHtml}
       `;
       grid.appendChild(card);

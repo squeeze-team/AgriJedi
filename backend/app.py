@@ -25,7 +25,7 @@ from config import CROP_CONFIG, DEFAULT_CROP, FRANCE_BBOX
 
 from services.s2_pc import get_ndvi_stats, get_s2_overlay_png, get_satellite_visualization
 from services.clms_wms import get_crop_type_overlay
-from services.crop_ndvi_analysis import analyze_crop_ndvi
+from services.crop_ndvi_analysis import analyze_crop_ndvi, _CROP_NDVI_PROFILES
 from services.weather_power import get_weather_monthly
 from services.faostat import get_yield_history, compute_yield_features
 from services.prices_worldbank import get_price_history, compute_price_features
@@ -331,10 +331,28 @@ async def agent_yield_analysis(
     for group, c in crops.items():
         yi = c.get("yield_index")
         yi_str = f"{yi:.2f}" if yi is not None else "N/A"
-        line = f"- {group} ({c.get('label','')}) : area {c.get('area_pct',0)}%, NDVI mean {c.get('ndvi_mean','?')}, yield index {yi_str}"
+        baseline = c.get("ndvi_baseline_used", "?")
+        peak = c.get("peak_months", [])
+        peak_str = ",".join(str(m) for m in peak) if peak else "?"
+        line = (
+            f"- {group} ({c.get('label','')}) : area {c.get('area_pct',0)}%, "
+            f"NDVI mean {c.get('ndvi_mean','?')} (baseline {baseline}, peak months {peak_str}), "
+            f"yield index {yi_str} [{c.get('yield_index_label','')}]"
+        )
         yp = c.get("yield_prediction")
         if yp and yp.get("predicted_yield_t_ha") is not None:
-            line += f" → forecast {yp['predicted_yield_t_ha']} t/ha ({yp['target_year']}, {'+' if yp['anomaly_vs_5yr_pct']>=0 else ''}{yp['anomaly_vs_5yr_pct']}% vs 5yr avg)"
+            conf = yp.get('confidence', 0)
+            sign = '+' if yp['anomaly_vs_5yr_pct'] >= 0 else ''
+            line += (
+                f" → forecast {yp['predicted_yield_t_ha']} t/ha "
+                f"({yp['target_year']}, {sign}{yp['anomaly_vs_5yr_pct']}% vs 5yr avg, "
+                f"confidence {conf:.0%})"
+            )
+            if yp.get("confidence_note"):
+                line += f" ⚠ {yp['confidence_note']}"
+        obs = c.get("observation_note")
+        if obs:
+            line += f"\n    Note: {obs}"
         summary_lines.append(line)
 
     return JSONResponse(content={
@@ -343,6 +361,17 @@ async def agent_yield_analysis(
         "date_range": date,
         "total_classified_pixels": analysis.get("total_classified_pixels"),
         "crops": crops,
+        "crop_profiles": {
+            group: {
+                "peak_months": prof["peak_months"],
+                "peak_ndvi_range": list(prof["peak_ndvi"]),
+                "summer_ndvi_range": list(prof["summer_ndvi"]),
+                "optimal_ndvi_range": list(prof["optimal_range"]),
+                "stress_threshold": prof["stress_threshold"],
+                "baseline_by_month": prof["baseline_by_month"],
+            }
+            for group, prof in _CROP_NDVI_PROFILES.items()
+        },
         "summary": "\n".join(summary_lines),
     })
 
