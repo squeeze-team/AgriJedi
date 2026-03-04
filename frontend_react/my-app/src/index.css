@@ -1,0 +1,67 @@
+@import 'tailwindcss';
+
+:root {
+  font-family: 'Avenir Next', 'Segoe UI', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #f8fafc;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.panel-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  background: #fff;
+  overflow: hidden;
+}
+
+.panel-title {
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+  padding: 0.75rem 1rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.loading-text {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.badge-up {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.badge-down {
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
+.badge-flat {
+  background: #fffbeb;
+  color: #ea580c;
+}
