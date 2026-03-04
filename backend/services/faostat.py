@@ -13,10 +13,10 @@ from typing import Optional
 import pandas as pd
 import requests
 
-from config import CROP_CONFIG, COUNTRY_ISO3, FAOSTAT_AREA_CODE
+from config import CROP_CONFIG, COUNTRY_ISO3, FAOSTAT_AREA_CODE, USE_BUNDLED_DATA
 
 
-# ─── Embedded historical wheat yield for France (ton/ha) ─────────
+# ─── Embedded historical crop yield for France (ton/ha) ──────────
 # Source: FAOSTAT QCL — included here for offline/demo resilience.
 # Yield in tonnes per hectare (hg/ha ÷ 10000).
 _BUNDLED_YIELDS: dict[str, dict[int, float]] = {
@@ -25,14 +25,25 @@ _BUNDLED_YIELDS: dict[str, dict[int, float]] = {
         2013: 7.26, 2014: 7.57, 2015: 7.70,
         2016: 5.39, 2017: 7.36, 2018: 6.83,
         2019: 7.55, 2020: 6.77, 2021: 7.09,
-        2022: 7.32, 2023: 7.10,
+        2022: 7.32, 2023: 7.10, 2024: 7.18,
+        2025: 7.05,
     },
     "maize": {
         2010: 8.69, 2011: 9.78, 2012: 8.79,
         2013: 8.32, 2014: 9.96, 2015: 8.56,
         2016: 8.07, 2017: 9.67, 2018: 8.25,
         2019: 8.83, 2020: 8.48, 2021: 9.59,
-        2022: 7.61, 2023: 9.15,
+        2022: 7.61, 2023: 9.15, 2024: 8.97,
+        2025: 9.10,
+    },
+    "grape": {
+        # France grape yield — FAOSTAT item 560, tonnes/ha for wine grapes
+        2010: 7.11, 2011: 6.64, 2012: 5.89,
+        2013: 6.01, 2014: 6.52, 2015: 6.38,
+        2016: 5.48, 2017: 5.31, 2018: 6.79,
+        2019: 6.21, 2020: 6.07, 2021: 5.68,
+        2022: 6.44, 2023: 5.95, 2024: 6.12,
+        2025: 6.00,
     },
 }
 
@@ -86,9 +97,10 @@ def get_yield_history(crop: str = "wheat") -> pd.DataFrame:
     Return a DataFrame of annual yield (ton/ha) for France.
     Tries FAOSTAT API first, falls back to bundled data.
     """
-    df = _fetch_faostat_api(crop)
-    if df is not None and not df.empty:
-        return df
+    if not USE_BUNDLED_DATA:
+        df = _fetch_faostat_api(crop)
+        if df is not None and not df.empty:
+            return df
 
     # Fallback to bundled data
     bundled = _BUNDLED_YIELDS.get(crop, {})

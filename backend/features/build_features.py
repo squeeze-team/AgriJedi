@@ -56,18 +56,26 @@ def build_feature_vector(
     # ── Vegetation (NDVI) ────────────────────────────────────────
     try:
         ndvi_range = _growing_season_date_range(crop)
-        ndvi_stats = get_ndvi_stats(bbox=bbox, date_range=ndvi_range)
+        ndvi_stats = get_ndvi_stats(bbox=bbox, date_range=ndvi_range, crop=crop)
     except Exception as exc:
         print(f"[build_features] NDVI fetch failed: {exc}")
         ndvi_stats = {}
+
+    # Compute 5-year NDVI average from bundled data for anomaly baseline
+    from services.s2_pc import _BUNDLED_NDVI
+    ndvi_series = _BUNDLED_NDVI.get(crop, _BUNDLED_NDVI.get("wheat", []))
+    if ndvi_series:
+        ndvi_5yr_avg = sum(e["ndvi_mean"] for e in ndvi_series[-5:]) / min(5, len(ndvi_series))
+    else:
+        ndvi_5yr_avg = 0.65  # fallback
 
     vegetation = {
         "ndvi_peak": ndvi_stats.get("ndvi_max"),
         "ndvi_mean": ndvi_stats.get("ndvi_mean"),
         "ndvi_std": ndvi_stats.get("ndvi_std"),
-        # Simplified anomaly: difference from a typical good-season mean of 0.65
+        # Anomaly vs 5-year bundled average
         "ndvi_anomaly_vs_avg": (
-            round(ndvi_stats["ndvi_mean"] - 0.65, 4)
+            round(ndvi_stats["ndvi_mean"] - ndvi_5yr_avg, 4)
             if ndvi_stats.get("ndvi_mean") is not None
             else None
         ),
