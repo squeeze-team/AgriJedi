@@ -173,6 +173,98 @@
     }
     .map-legend h4 { font-size: 12px; margin-bottom: 4px; }
     .map-legend img { width: 100%; height: auto; }
+
+    /* ── Satellite Imagery Section ──────────── */
+    .satellite-section {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 28px 28px;
+    }
+    .sat-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .sat-header h2 {
+      font-size: 18px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .sat-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .sat-controls label {
+      font-size: 13px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .sat-controls input,
+    .sat-controls select {
+      padding: 5px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      font-size: 13px;
+      font-family: inherit;
+    }
+    .sat-controls input { width: 220px; }
+    .sat-controls button {
+      padding: 6px 16px;
+      border-radius: 6px;
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .sat-controls button:hover { background: #1d4ed8; }
+    .sat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 900px) {
+      .sat-grid { grid-template-columns: 1fr; }
+    }
+    .sat-panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .sat-title {
+      padding: 10px 16px;
+      font-weight: 600;
+      font-size: 14px;
+      border-bottom: 1px solid var(--border);
+      background: #fafbfc;
+    }
+    .sat-img-wrap {
+      position: relative;
+      min-height: 320px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f8f9fa;
+    }
+    .sat-img-wrap img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    .sat-placeholder {
+      color: var(--text-muted);
+      font-size: 13px;
+      text-align: center;
+      padding: 20px;
+    }
   </style>
 </head>
 <body>
@@ -232,6 +324,61 @@
         <h3>📈 Price Forecast (3-month)</h3>
         <div class="loading" id="priceLoading">Waiting for prediction…</div>
         <div id="priceResult" style="display:none;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Satellite Imagery Section ─────────────────── -->
+  <div class="satellite-section">
+    <div class="sat-header">
+      <h2>🛰 Satellite Imagery — Sentinel-2 + CLMS</h2>
+      <div class="sat-controls">
+        <label>Region:
+          <select id="bboxPreset" onchange="applyBboxPreset()">
+            <option value="4.67,44.71,4.97,45.01">Rhône Valley</option>
+            <option value="1.2,47.8,1.8,48.3">Beauce (Paris Basin)</option>
+            <option value="3.0,49.0,3.8,49.4">Champagne</option>
+            <option value="-0.8,44.6,0.0,45.1">Bordeaux</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </label>
+        <label>BBox:
+          <input id="bboxInput" type="text" value="4.67,44.71,4.97,45.01" />
+        </label>
+        <label>Date:
+          <input id="satDateInput" type="text" value="2025-06-01/2025-09-01" />
+        </label>
+        <button onclick="loadSatelliteViews()">🛰 Load</button>
+      </div>
+    </div>
+    <div class="sat-grid">
+      <div class="sat-panel">
+        <div class="sat-title">True Color (RGB)</div>
+        <div class="sat-img-wrap">
+          <div class="sat-placeholder" id="ph-rgb">Select a region and click <b>Load</b></div>
+          <img id="sat-rgb" style="display:none;" alt="True Color RGB" />
+        </div>
+      </div>
+      <div class="sat-panel">
+        <div class="sat-title">False Color (NIR-R-G)</div>
+        <div class="sat-img-wrap">
+          <div class="sat-placeholder" id="ph-false_color">—</div>
+          <img id="sat-false_color" style="display:none;" alt="False Color" />
+        </div>
+      </div>
+      <div class="sat-panel">
+        <div class="sat-title">NDVI — Vegetation Health</div>
+        <div class="sat-img-wrap">
+          <div class="sat-placeholder" id="ph-ndvi">—</div>
+          <img id="sat-ndvi" style="display:none;" alt="NDVI" />
+        </div>
+      </div>
+      <div class="sat-panel">
+        <div class="sat-title">RGB + CLMS Crop Types Overlay</div>
+        <div class="sat-img-wrap">
+          <div class="sat-placeholder" id="ph-overlay">—</div>
+          <img id="sat-overlay" style="display:none;" alt="Overlay" />
+        </div>
       </div>
     </div>
   </div>
