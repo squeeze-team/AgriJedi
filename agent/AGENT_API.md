@@ -46,8 +46,12 @@ This document describes the two **agent-oriented** endpoints designed for AI age
       "ndvi_median": 0.36,
       "ndvi_p25": 0.28,
       "ndvi_p75": 0.47,
-      "yield_index": 0.85,
-      "yield_index_label": "Below average",
+      "yield_index": 1.19,
+      "yield_index_label": "Normal (off-season)",
+      "ndvi_baseline_used": 0.318,
+      "optimal_ndvi_range": [0.70, 0.85],
+      "peak_months": [4, 5],
+      "observation_note": "Wheat is harvested by July...",
       "yield_prediction": {
         "predicted_yield_t_ha": 4.98,
         "target_year": 2025,
@@ -62,9 +66,109 @@ This document describes the two **agent-oriented** endpoints designed for AI age
       }
     }
   },
+  "crop_profiles": {
+    "<crop_group>": {
+      "peak_months": [4, 5],
+      "peak_ndvi_range": [0.70, 0.85],
+      "summer_ndvi_range": [0.20, 0.50],
+      "optimal_ndvi_range": [0.70, 0.85],
+      "stress_threshold": 0.55,
+      "baseline_by_month": {"1": 0.25, "2": 0.30, "...": "...monthly NDVI reference"}
+    }
+  },
   "summary": "string — multi-line text summary for LLM context"
 }
 ```
+
+### Crop Phenology Profiles (`crop_profiles`)
+
+The response includes a `crop_profiles` object with full phenological reference data for every crop group. This allows agents to reason about whether an observation window is appropriate, cross-check baselines, and assess stress levels independently.
+
+```json
+{
+  "wheat": {
+    "peak_months": [4, 5],
+    "peak_ndvi_range": [0.70, 0.85],
+    "summer_ndvi_range": [0.20, 0.50],
+    "optimal_ndvi_range": [0.70, 0.85],
+    "stress_threshold": 0.55,
+    "baseline_by_month": {
+      "1": 0.25, "2": 0.30, "3": 0.50, "4": 0.72, "5": 0.78,
+      "6": 0.55, "7": 0.30, "8": 0.22, "9": 0.20, "10": 0.20,
+      "11": 0.22, "12": 0.24
+    }
+  },
+  "maize": {
+    "peak_months": [7, 8],
+    "peak_ndvi_range": [0.75, 0.90],
+    "summer_ndvi_range": [0.65, 0.85],
+    "optimal_ndvi_range": [0.75, 0.90],
+    "stress_threshold": 0.55,
+    "baseline_by_month": {
+      "1": 0.10, "2": 0.10, "3": 0.12, "4": 0.15, "5": 0.30, "6": 0.55,
+      "7": 0.78, "8": 0.82, "9": 0.65, "10": 0.35, "11": 0.15, "12": 0.10
+    }
+  },
+  "grape": {
+    "peak_months": [7, 8],
+    "peak_ndvi_range": [0.45, 0.65],
+    "summer_ndvi_range": [0.40, 0.65],
+    "optimal_ndvi_range": [0.50, 0.65],
+    "stress_threshold": 0.30,
+    "baseline_by_month": {
+      "1": 0.18, "2": 0.18, "3": 0.22, "4": 0.32, "5": 0.42, "6": 0.50,
+      "7": 0.55, "8": 0.56, "9": 0.48, "10": 0.35, "11": 0.22, "12": 0.18
+    }
+  },
+  "other_cereal": {
+    "peak_months": [4, 5],
+    "peak_ndvi_range": [0.65, 0.80],
+    "summer_ndvi_range": [0.18, 0.45],
+    "optimal_ndvi_range": [0.65, 0.80],
+    "stress_threshold": 0.50,
+    "baseline_by_month": {
+      "1": 0.22, "2": 0.28, "3": 0.48, "4": 0.68, "5": 0.72,
+      "6": 0.48, "7": 0.25, "8": 0.20, "9": 0.18, "10": 0.18,
+      "11": 0.20, "12": 0.22
+    }
+  },
+  "grassland": {
+    "peak_months": [5, 6],
+    "peak_ndvi_range": [0.55, 0.75],
+    "summer_ndvi_range": [0.40, 0.70],
+    "optimal_ndvi_range": [0.55, 0.75],
+    "stress_threshold": 0.30,
+    "baseline_by_month": {
+      "1": 0.30, "2": 0.32, "3": 0.42, "4": 0.55, "5": 0.62, "6": 0.60,
+      "7": 0.50, "8": 0.48, "9": 0.50, "10": 0.45, "11": 0.35, "12": 0.30
+    }
+  },
+  "other": {
+    "peak_months": [6, 7],
+    "peak_ndvi_range": [0.55, 0.80],
+    "summer_ndvi_range": [0.35, 0.70],
+    "optimal_ndvi_range": [0.55, 0.80],
+    "stress_threshold": 0.30,
+    "baseline_by_month": {
+      "1": 0.18, "2": 0.20, "3": 0.30, "4": 0.45, "5": 0.55, "6": 0.62,
+      "7": 0.60, "8": 0.50, "9": 0.38, "10": 0.25, "11": 0.20, "12": 0.18
+    }
+  }
+}
+```
+
+#### Profile Fields
+
+| Field                | Description                                                                 |
+|----------------------|-----------------------------------------------------------------------------|
+| `peak_months`        | Month numbers (1-12) when canopy cover is at maximum                        |
+| `peak_ndvi_range`    | `[low, high]` — expected NDVI during peak months for a healthy crop         |
+| `summer_ndvi_range`  | `[low, high]` — expected NDVI during June–September                         |
+| `optimal_ndvi_range` | `[low, high]` — NDVI that indicates the crop is in good condition           |
+| `stress_threshold`   | NDVI below this (during peak season) indicates definite crop stress         |
+| `baseline_by_month`  | Monthly reference NDVI (1=Jan … 12=Dec), used to compute `yield_index`      |
+
+> **How `yield_index` is computed:** the observation window months are averaged from `baseline_by_month`, then `yield_index = ndvi_mean / avg_baseline`. For example, wheat observed in June–September: baseline = avg(0.55, 0.30, 0.22, 0.20) = 0.318; if NDVI mean = 0.38, then yield_index = 0.38 / 0.318 = 1.19.
 
 ### Crop Groups
 
@@ -81,9 +185,16 @@ This document describes the two **agent-oriented** endpoints designed for AI age
 
 ### Key Fields Explained
 
-- **`yield_index`** — Ratio of current NDVI mean to the 5-year NDVI baseline for that crop. A value of 1.05 means vegetation health is 5% above the historical average.
+- **`yield_index`** — Ratio of current NDVI mean to the **phenology-aware monthly baseline** for that crop. The baseline varies by month — e.g. wheat baseline in July (post-harvest) is ~0.30, while maize baseline in July (peak growth) is ~0.78. A value of 1.03 means vegetation health is 3% above the expected seasonal baseline.
+- **`yield_index_label`** — Human-readable label that accounts for whether the observation falls in the crop's peak season or off-season. Off-season labels include suffixes like "(off-season)" or "(may be post-harvest)".
+- **`ndvi_baseline_used`** — The actual monthly-averaged NDVI baseline used for this crop in the observation window. Lets the agent verify the index calculation.
+- **`optimal_ndvi_range`** — The NDVI range `[low, high]` that indicates healthy canopy during the crop's peak growth period.
+- **`peak_months`** — Month numbers when this crop reaches maximum canopy cover (e.g. `[4, 5]` = April-May for wheat, `[7, 8]` = July-August for maize).
+- **`observation_note`** — (optional) Plain-text warning when the observation window doesn't align with the crop's peak season. **Agents should pay attention to this field** — it explains why a yield index might be misleading.
 - **`yield_prediction.predicted_yield_t_ha`** — Forecasted yield in metric tons per hectare, calculated as: `(5yr_avg + trend) × yield_index`.
 - **`yield_prediction.anomaly_vs_5yr_pct`** — Percentage deviation from the 5-year average yield.
+- **`yield_prediction.confidence`** — 0.0–1.0 score. Drops to 0.5 when observation is off-season for the crop (e.g. wheat in summer). Agents should weight predictions accordingly.
+- **`yield_prediction.confidence_note`** — (optional) Explanation of why confidence is reduced.
 - **`yield_prediction.history`** — Actual Agreste-sourced département yields for the past 5 years.
 
 ### Example Request
@@ -187,8 +298,9 @@ GET /agent/market-overview?start=20230101&end=20251231
 1. **Start with `/agent/yield-analysis`** to assess crop health and yield outlook for a specific region.
 2. **Then call `/agent/market-overview`** to understand the price context and weather conditions.
 3. **Use the `summary` field** in each response as pre-formatted context — it provides a concise text overview suitable for inclusion in LLM prompts.
-4. **Combine insights**: If `yield_index < 1.0` (poor vegetation) and `weather.stats.heat_stress_months > 3`, the region is likely experiencing drought stress. Cross-reference with `prices.stats.trend_direction` to assess market impact.
-5. **All data is JSON** — no image endpoints are needed for analytical reasoning.
+4. **Check phenology alignment**: Always check `peak_months` and `observation_note`. If the observation window is off-season for a crop (e.g. wheat in July), the `yield_index` reflects stubble/cover crops, NOT crop health. In such cases, `yield_prediction.confidence` will be reduced.
+5. **Combine insights**: If `yield_index < 1.0` during **peak season** and `weather.stats.heat_stress_months > 3`, the region is likely experiencing drought stress. Cross-reference with `prices.stats.trend_direction` to assess market impact.
+6. **All data is JSON** — no image endpoints are needed for analytical reasoning.
 
 ### Recommended Agent Workflow
 
