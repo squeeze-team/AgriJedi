@@ -11,6 +11,10 @@ Endpoints:
   GET /prices/history          → monthly price time-series
   GET /yield/history           → annual yield time-series
   GET /ndvi/stats              → NDVI summary statistics
+
+Agent-oriented (structured JSON, single-call):
+  GET /agent/yield-analysis    → per-crop NDVI + yield forecast for a bbox
+  GET /agent/market-overview   → 3-crop price history + weather trends
 """
 
 from fastapi import FastAPI, Query, HTTPException
@@ -21,6 +25,7 @@ from config import CROP_CONFIG, DEFAULT_CROP, FRANCE_BBOX
 
 from services.s2_pc import get_ndvi_stats, get_s2_overlay_png, get_satellite_visualization
 from services.clms_wms import get_crop_type_overlay
+from services.crop_ndvi_analysis import analyze_crop_ndvi
 from services.weather_power import get_weather_monthly
 from services.faostat import get_yield_history, compute_yield_features
 from services.prices_worldbank import get_price_history, compute_price_features
@@ -246,6 +251,212 @@ async def ndvi_stats(
 
     stats = get_ndvi_stats(date_range=date, crop=crop)
     return JSONResponse(content={"crop": crop, **stats})
+
+
+# ─── Crop-level NDVI analysis ────────────────────────────────────
+@app.get("/analysis/crop-ndvi")
+async def crop_ndvi_analysis(
+    bbox: str = Query(
+        default="4.67,44.71,4.97,45.01",
+        description="west,south,east,north in EPSG:4326",
+    ),
+    date: str = Query(
+        default="2025-06-01/2025-09-01",
+        description="Date range for Sentinel-2 search",
+    ),
+    resolution: int = Query(
+        default=400, ge=100, le=1000,
+        description="Grid resolution (pixels, width = height)",
+    ),
+):
+    """
+    Classify crop types via CLMS WMS colour-reverse-lookup, then
+    compute per-crop NDVI statistics and a relative yield proxy.
+    """
+    try:
+        west, south, east, north = [float(v) for v in bbox.split(",")]
+    except Exception:
+        raise HTTPException(400, "bbox must be west,south,east,north")
+
+    result = analyze_crop_ndvi(
+        bbox=[west, south, east, north],
+        date_range=date,
+        resolution=resolution,
+    )
+    return JSONResponse(content=result)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Agent-oriented endpoints — consolidated JSON, one-call-per-task
+# ═══════════════════════════════════════════════════════════════════
+
+@app.get("/agent/yield-analysis")
+async def agent_yield_analysis(
+    bbox: str = Query(
+        default="4.67,44.71,4.97,45.01",
+        description="Bounding box: west,south,east,north in EPSG:4326",
+    ),
+    date: str = Query(
+        default="2025-06-01/2025-09-01",
+        description="Sentinel-2 date range for NDVI (YYYY-MM-DD/YYYY-MM-DD)",
+    ),
+):
+    """
+    **Agent endpoint** — Per-crop yield analysis for a geographic region.
+
+    Returns a single JSON containing:
+      - Per-crop NDVI statistics (mean, median, std, IQR, pixel count)
+      - NDVI-based yield index (ratio vs 5-year baseline)
+      - Agreste-backed yield forecast in t/ha with confidence & explanation
+      - Summary text suitable for LLM consumption
+
+    Crops covered: wheat, maize, grape (+ other_cereal, grassland, other).
+    """
+    try:
+        west, south, east, north = [float(v) for v in bbox.split(",")]
+    except Exception:
+        raise HTTPException(400, "bbox must be west,south,east,north (EPSG:4326)")
+
+    bbox_list = [west, south, east, north]
+    analysis = analyze_crop_ndvi(bbox=bbox_list, date_range=date)
+
+    # Build a concise text summary for LLM agents
+    summary_lines = [
+        f"Region: bbox [{west}, {south}, {east}, {north}]",
+        f"Analysis date range: {date}",
+        f"Total classified pixels: {analysis.get('total_classified_pixels', 'N/A')}",
+        "",
+    ]
+    crops = analysis.get("crops", {})
+    for group, c in crops.items():
+        yi = c.get("yield_index")
+        yi_str = f"{yi:.2f}" if yi is not None else "N/A"
+        line = f"- {group} ({c.get('label','')}) : area {c.get('area_pct',0)}%, NDVI mean {c.get('ndvi_mean','?')}, yield index {yi_str}"
+        yp = c.get("yield_prediction")
+        if yp and yp.get("predicted_yield_t_ha") is not None:
+            line += f" → forecast {yp['predicted_yield_t_ha']} t/ha ({yp['target_year']}, {'+' if yp['anomaly_vs_5yr_pct']>=0 else ''}{yp['anomaly_vs_5yr_pct']}% vs 5yr avg)"
+        summary_lines.append(line)
+
+    return JSONResponse(content={
+        "endpoint": "/agent/yield-analysis",
+        "bbox": bbox_list,
+        "date_range": date,
+        "total_classified_pixels": analysis.get("total_classified_pixels"),
+        "crops": crops,
+        "summary": "\n".join(summary_lines),
+    })
+
+
+@app.get("/agent/market-overview")
+async def agent_market_overview(
+    start: str = Query(
+        default="20230101",
+        description="Weather start date (yyyyMMdd)",
+    ),
+    end: str = Query(
+        default="20251231",
+        description="Weather end date (yyyyMMdd)",
+    ),
+):
+    """
+    **Agent endpoint** — Multi-crop price history + weather trends in one call.
+
+    Returns a single JSON containing:
+      - Monthly price series for wheat, maize, and grape (USD/mt)
+      - Monthly weather for France (precipitation, temperature, peak temperature)
+      - Computed price statistics (latest price, 12-month change %, trend direction)
+      - Weather statistics (avg temp, total precip, heat-stress months)
+      - Summary text suitable for LLM consumption
+    """
+    # ── Collect price data for all 3 crops ──
+    crop_names = ["wheat", "maize", "grape"]
+    price_data: dict[str, dict] = {}
+    for crop in crop_names:
+        df = get_price_history(crop)
+        if df.empty:
+            price_data[crop] = {"dates": [], "prices": [], "unit": "USD/mt", "stats": {}}
+            continue
+        dates = df["date"].dt.strftime("%Y-%m").tolist()
+        prices = df["price"].round(2).tolist()
+        latest = prices[-1] if prices else None
+        oldest = prices[0] if prices else None
+        change_pct = round((latest - oldest) / oldest * 100, 1) if oldest and latest else None
+        # 6-month moving direction
+        if len(prices) >= 6:
+            recent_avg = sum(prices[-3:]) / 3
+            older_avg = sum(prices[-6:-3]) / 3
+            trend = "rising" if recent_avg > older_avg * 1.02 else ("falling" if recent_avg < older_avg * 0.98 else "stable")
+        else:
+            trend = "insufficient data"
+
+        price_data[crop] = {
+            "dates": dates,
+            "prices": prices,
+            "unit": "USD/mt",
+            "stats": {
+                "latest_price": latest,
+                "earliest_price": oldest,
+                "period_change_pct": change_pct,
+                "high": max(prices),
+                "low": min(prices),
+                "trend_direction": trend,
+            },
+        }
+
+    # ── Collect weather data ──
+    weather = get_weather_monthly(start_date=start, end_date=end)
+    months = weather.get("months", [])
+    t2m = weather.get("T2M", [])
+    precip = weather.get("PRECTOTCORR", [])
+    t2m_max = weather.get("T2M_MAX", [])
+
+    weather_stats = {}
+    if t2m:
+        weather_stats["avg_temp_C"] = round(sum(t2m) / len(t2m), 1)
+        weather_stats["total_precip_mm"] = round(sum(precip), 1)
+        weather_stats["peak_temp_C"] = round(max(t2m_max), 1) if t2m_max else None
+        weather_stats["heat_stress_months"] = sum(1 for t in t2m_max if t > 35)
+        weather_stats["drought_months"] = sum(1 for p in precip if p < 30)
+        weather_stats["months_covered"] = len(months)
+
+    # ── Build text summary ──
+    summary_lines = [
+        f"Market overview for wheat, maize, grape ({start[:4]}-{end[:4]})",
+        "",
+    ]
+    for crop in crop_names:
+        s = price_data[crop].get("stats", {})
+        if s:
+            summary_lines.append(
+                f"- {crop}: latest {s.get('latest_price')} USD/mt, "
+                f"period change {s.get('period_change_pct')}%, "
+                f"trend {s.get('trend_direction')}, "
+                f"range {s.get('low')}–{s.get('high')} USD/mt"
+            )
+    if weather_stats:
+        summary_lines.append("")
+        summary_lines.append(
+            f"Weather ({months[0] if months else '?'} to {months[-1] if months else '?'}): "
+            f"avg {weather_stats.get('avg_temp_C')}°C, "
+            f"total precip {weather_stats.get('total_precip_mm')} mm, "
+            f"peak {weather_stats.get('peak_temp_C')}°C, "
+            f"{weather_stats.get('heat_stress_months')} heat-stress months, "
+            f"{weather_stats.get('drought_months')} drought months"
+        )
+
+    return JSONResponse(content={
+        "endpoint": "/agent/market-overview",
+        "period": {"start": start, "end": end},
+        "prices": price_data,
+        "weather": {
+            "months": months,
+            "PRECTOTCORR": precip,
+            "T2M": t2m,
+            "T2M_MAX": t2m_max,
+            "stats": weather_stats,
+        },
+        "summary": "\n".join(summary_lines),
+    })
 
 
 # ─── Run ─────────────────────────────────────────────────────────
