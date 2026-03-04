@@ -232,3 +232,156 @@ def get_s2_overlay_png(
     plt.close(fig)
     buf.seek(0)
     return buf
+
+
+# ─── Satellite visualisation panel (multi-layer) ─────────────────
+
+# Simple in-memory cache so 4 parallel /satellite/view requests
+# reuse the same STAC search result instead of querying 4 times.
+_stac_search_cache: dict = {}
+
+
+def _search_items_cached(
+    bbox: list[float], date_range: str, max_items: int = 5
+) -> list:
+    key = (tuple(bbox), date_range, max_items)
+    if key in _stac_search_cache:
+        return _stac_search_cache[key]
+    if len(_stac_search_cache) > 20:
+        _stac_search_cache.clear()
+    items = search_items(bbox, date_range, max_items)
+    _stac_search_cache[key] = items
+    return items
+
+
+def _array_to_png(
+    arr_rgb: np.ndarray, target_w: int, target_h: int
+) -> io.BytesIO:
+    """Convert a (H, W, 3) float32 [0,1] array to a resized PNG buffer."""
+    arr_uint8 = (np.clip(arr_rgb, 0, 1) * 255).astype(np.uint8)
+    img = Image.fromarray(arr_uint8, mode="RGB")
+    if img.size != (target_w, target_h):
+        img = img.resize((target_w, target_h), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
+def _ndvi_to_png(
+    arr_2d: np.ndarray, target_w: int, target_h: int
+) -> io.BytesIO:
+    """Render a 2-D NDVI array with RdYlGn colormap to PNG buffer."""
+    fig, ax = plt.subplots(
+        figsize=(target_w / 100, target_h / 100), dpi=100
+    )
+    im = ax.imshow(
+        arr_2d, cmap="RdYlGn", vmin=-0.2, vmax=0.9, aspect="auto"
+    )
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="NDVI")
+    ax.axis("off")
+    fig.tight_layout(pad=0.2)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.1)
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
+def _placeholder_png(
+    width: int, height: int, text: str = "No data"
+) -> io.BytesIO:
+    """Return a simple grey placeholder PNG with centred text."""
+    fig, ax = plt.subplots(figsize=(width / 100, height / 100), dpi=100)
+    ax.text(
+        0.5, 0.5, text,
+        ha="center", va="center", fontsize=12,
+        color="#666", transform=ax.transAxes,
+    )
+    ax.set_facecolor("#f0f0f0")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0)
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
+def get_satellite_visualization(
+    bbox: list[float],
+    date_range: str,
+    vis_type: str = "rgb",
+    width: int = 512,
+    height: int = 512,
+) -> tuple[io.BytesIO, dict]:
+    """
+    Generate a satellite visualisation PNG for the requested layer type.
+
+    Parameters
+    ----------
+    bbox : [west, south, east, north]
+    date_range : STAC datetime string, e.g. "2025-06-01/2025-09-01"
+    vis_type : "rgb" | "false_color" | "ndvi" | "overlay"
+    width, height : output pixel dimensions
+
+    Returns
+    -------
+    (png_buffer, metadata_dict)
+    """
+    meta: dict = {"item_id": None, "date": None, "cloud_cover": None}
+
+    try:
+        items = _search_items_cached(bbox, date_range)
+    except Exception as exc:
+        print(f"[s2_pc] STAC search failed: {exc}")
+        return _placeholder_png(width, height, "Sentinel-2 search failed"), meta
+
+    if not items:
+        return _placeholder_png(width, height, "No cloud-free images found"), meta
+
+    item = items[0]
+    meta = {
+        "item_id": item.id,
+        "date": item.datetime.isoformat() if item.datetime else None,
+        "cloud_cover": item.properties.get("eo:cloud_cover"),
+    }
+
+    try:
+        if vis_type == "rgb":
+            red, _ = _load_band(item, "B04", bbox)
+            green, _ = _load_band(item, "B03", bbox)
+            blue, _ = _load_band(item, "B02", bbox)
+            rgb = np.stack(
+                [_normalize(red), _normalize(green), _normalize(blue)],
+                axis=-1,
+            )
+            return _array_to_png(rgb, width, height), meta
+
+        elif vis_type == "false_color":
+            nir, _ = _load_band(item, "B08", bbox)
+            red, _ = _load_band(item, "B04", bbox)
+            green, _ = _load_band(item, "B03", bbox)
+            fc = np.stack(
+                [_normalize(nir), _normalize(red), _normalize(green)],
+                axis=-1,
+            )
+            return _array_to_png(fc, width, height), meta
+
+        elif vis_type == "ndvi":
+            red, _ = _load_band(item, "B04", bbox)
+            nir, _ = _load_band(item, "B08", bbox)
+            ndvi = (nir - red) / (nir + red + 1e-6)
+            return _ndvi_to_png(ndvi, width, height), meta
+
+        elif vis_type == "overlay":
+            buf = get_s2_overlay_png(bbox, date_range, width, height)
+            return buf, meta
+
+        else:
+            return _placeholder_png(width, height, f"Unknown: {vis_type}"), meta
+
+    except Exception as exc:
+        print(f"[s2_pc] Visualisation error ({vis_type}): {exc}")
+        return _placeholder_png(width, height, f"Error: {vis_type}\n{exc}"), meta

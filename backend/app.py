@@ -19,7 +19,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 
 from config import CROP_CONFIG, DEFAULT_CROP, FRANCE_BBOX
 
-from services.s2_pc import get_ndvi_stats, get_s2_overlay_png
+from services.s2_pc import get_ndvi_stats, get_s2_overlay_png, get_satellite_visualization
 from services.clms_wms import get_crop_type_overlay
 from services.weather_power import get_weather_monthly
 from services.faostat import get_yield_history, compute_yield_features
@@ -92,6 +92,60 @@ async def map_overlay(
         height=height,
     )
     return StreamingResponse(png_bytes, media_type="image/png")
+
+
+# ─── Satellite visualisation panel ────────────────────────────────
+@app.get("/satellite/view")
+async def satellite_view(
+    bbox: str = Query(
+        default="4.67,44.71,4.97,45.01",
+        description="west,south,east,north in EPSG:4326",
+    ),
+    date: str = Query(
+        default="2025-06-01/2025-09-01",
+        description="Date range for Sentinel-2 search",
+    ),
+    layer: str = Query(
+        default="rgb",
+        description="Visualisation type: rgb, false_color, ndvi, overlay",
+    ),
+    width: int = Query(default=600, ge=64, le=2048),
+    height: int = Query(default=600, ge=64, le=2048),
+):
+    """
+    Return a single satellite visualisation PNG for the given bbox and layer type.
+
+    Layers:
+      - **rgb** — Sentinel-2 true-colour
+      - **false_color** — NIR-R-G composite
+      - **ndvi** — NDVI heatmap (RdYlGn)
+      - **overlay** — RGB + CLMS Crop Types
+    """
+    valid_layers = ("rgb", "false_color", "ndvi", "overlay")
+    if layer not in valid_layers:
+        raise HTTPException(400, f"Unknown layer '{layer}'. Use: {valid_layers}")
+
+    try:
+        west, south, east, north = [float(v) for v in bbox.split(",")]
+    except Exception:
+        raise HTTPException(400, "bbox must be west,south,east,north")
+
+    buf, meta = get_satellite_visualization(
+        bbox=[west, south, east, north],
+        date_range=date,
+        vis_type=layer,
+        width=width,
+        height=height,
+    )
+    return StreamingResponse(
+        buf,
+        media_type="image/png",
+        headers={
+            "X-Item-Id": str(meta.get("item_id") or ""),
+            "X-Item-Date": str(meta.get("date") or ""),
+            "X-Cloud-Cover": str(meta.get("cloud_cover") or ""),
+        },
+    )
 
 
 # ─── Weather time-series ─────────────────────────────────────────

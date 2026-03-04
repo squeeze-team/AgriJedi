@@ -311,6 +311,56 @@ function demoPriceResult(crop) {
   };
 }
 
+// ─── Satellite Imagery ─────────────────────────────────────────────
+let bboxRect = null;
+
+function applyBboxPreset() {
+  const sel = document.getElementById("bboxPreset");
+  const input = document.getElementById("bboxInput");
+  if (sel.value !== "custom") {
+    input.value = sel.value;
+  }
+}
+
+function loadSatelliteViews() {
+  const bbox = document.getElementById("bboxInput").value.trim();
+  const date = document.getElementById("satDateInput").value.trim();
+  const layers = ["rgb", "false_color", "ndvi", "overlay"];
+
+  // Draw bbox rectangle on Leaflet map
+  try {
+    const [west, south, east, north] = bbox.split(",").map(Number);
+    if (bboxRect) map.removeLayer(bboxRect);
+    bboxRect = L.rectangle(
+      [[south, west], [north, east]],
+      { color: "#e11d48", weight: 2, fillOpacity: 0.1, dashArray: "6 4" }
+    ).addTo(map);
+  } catch (_) { /* ignore parse errors */ }
+
+  layers.forEach(layer => {
+    const img = document.getElementById(`sat-${layer}`);
+    const ph  = document.getElementById(`ph-${layer}`);
+
+    // Show loading state
+    img.style.display = "none";
+    ph.textContent = "Loading…";
+    ph.style.display = "block";
+
+    const url = `${API_BASE}/satellite/view?bbox=${encodeURIComponent(bbox)}&date=${encodeURIComponent(date)}&layer=${layer}&width=600&height=600`;
+
+    const tmp = new Image();
+    tmp.onload = () => {
+      img.src = tmp.src;
+      img.style.display = "block";
+      ph.style.display = "none";
+    };
+    tmp.onerror = () => {
+      ph.textContent = "Failed to load — is the backend running?";
+    };
+    tmp.src = url;
+  });
+}
+
 // ─── Crop selector change → reload charts ────────────────────────
 document.getElementById("cropSelect").addEventListener("change", () => {
   loadPriceChart();
