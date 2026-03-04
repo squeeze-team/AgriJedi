@@ -359,6 +359,108 @@ function loadSatelliteViews() {
     };
     tmp.src = url;
   });
+
+  // Also trigger crop-level analysis
+  loadCropAnalysis();
+}
+
+// ─── Crop-level NDVI Analysis ─────────────────────────────────────
+async function loadCropAnalysis() {
+  const bbox = document.getElementById("bboxInput").value.trim();
+  const date = document.getElementById("satDateInput").value.trim();
+  const grid = document.getElementById("analysisGrid");
+  const loading = document.getElementById("analysisLoading");
+
+  grid.innerHTML = "";
+  loading.style.display = "block";
+
+  try {
+    const resp = await fetch(
+      `${API_BASE}/analysis/crop-ndvi?bbox=${encodeURIComponent(bbox)}&date=${encodeURIComponent(date)}&resolution=400`
+    );
+    const data = await resp.json();
+    loading.style.display = "none";
+
+    if (!data.crops || Object.keys(data.crops).length === 0) {
+      grid.innerHTML = `<div style="padding:20px;color:var(--text-muted);grid-column:1/-1;">${data.error || "No crop data found for this region."}</div>`;
+      return;
+    }
+
+    // Sort by area_pct descending
+    const entries = Object.entries(data.crops).sort((a, b) => (b[1].area_pct || 0) - (a[1].area_pct || 0));
+
+    for (const [group, c] of entries) {
+      const yieldClass = !c.yield_index ? "" :
+        c.yield_index >= 1.02 ? "yield-above" :
+        c.yield_index >= 0.98 ? "yield-near" : "yield-below";
+
+      // Build yield prediction block
+      const yp = c.yield_prediction;
+      let yieldPredHtml = "";
+      if (yp && yp.predicted_yield_t_ha != null) {
+        const anomSign = yp.anomaly_vs_5yr_pct >= 0 ? "+" : "";
+        const anomColor = yp.anomaly_vs_5yr_pct >= 0 ? "var(--green)" : "var(--red)";
+        const histYears = yp.history ? Object.keys(yp.history).join(", ") : "";
+        const histVals  = yp.history ? Object.values(yp.history).join(" → ") : "";
+        const depts = yp.departements ? yp.departements.join(", ") : "";
+        yieldPredHtml = `
+          <div style="margin-top:8px;padding:10px 12px;background:#f8fafc;border-radius:8px;border-left:3px solid var(--accent);">
+            <div style="font-size:13px;font-weight:700;margin-bottom:4px;">
+              🌾 ${yp.target_year} Yield Forecast
+            </div>
+            <div style="font-size:24px;font-weight:800;color:var(--accent);">
+              ${yp.predicted_yield_t_ha} t/ha
+              <span style="font-size:13px;font-weight:600;color:${anomColor};margin-left:6px;">
+                ${anomSign}${yp.anomaly_vs_5yr_pct}% vs 5yr avg
+              </span>
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">
+              5yr avg: ${yp.avg_5yr} t/ha | Trend: ${yp.trend >= 0 ? "+" : ""}${yp.trend} t/ha/yr
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
+              History: ${histVals} t/ha
+            </div>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
+              Départements: ${depts} | Confidence: ${(yp.confidence * 100).toFixed(0)}%
+            </div>
+          </div>
+        `;
+      }
+
+      const card = document.createElement("div");
+      card.className = "crop-card";
+      card.innerHTML = `
+        <div class="crop-card-header">
+          <h3>${group.replace("_", " ")}</h3>
+          <span class="area-badge">${c.area_pct}% area</span>
+        </div>
+        <div class="sub-label">${c.label}</div>
+        <dl class="crop-stats">
+          <dt>NDVI mean</dt><dd>${c.ndvi_mean}</dd>
+          <dt>NDVI median</dt><dd>${c.ndvi_median}</dd>
+          <dt>NDVI σ</dt><dd>${c.ndvi_std}</dd>
+          <dt>NDVI IQR</dt><dd>${c.ndvi_p25} – ${c.ndvi_p75}</dd>
+          <dt>Pixels</dt><dd>${c.pixel_count.toLocaleString()}</dd>
+        </dl>
+        ${c.yield_index != null
+          ? `<span class="yield-badge ${yieldClass}">NDVI index: ${c.yield_index.toFixed(2)} — ${c.yield_index_label}</span>`
+          : `<span class="yield-badge" style="background:#f8fafc;color:var(--text-muted);">NDVI index: N/A</span>`
+        }
+        ${yieldPredHtml}
+      `;
+      grid.appendChild(card);
+    }
+
+    // Add summary footer
+    const footer = document.createElement("div");
+    footer.style.cssText = "grid-column:1/-1; font-size:12px; color:var(--text-muted); padding:8px 0 0;";
+    footer.textContent = `Region: [${data.bbox}] — ${data.total_classified_pixels.toLocaleString()} classified pixels at ${data.resolution_px} — Source: ${data.item_id || "bundled"}`;
+    grid.appendChild(footer);
+
+  } catch (err) {
+    loading.style.display = "none";
+    grid.innerHTML = `<div style="padding:20px;color:var(--red);grid-column:1/-1;">Analysis failed: ${err.message}. Is the backend running?</div>`;
+  }
 }
 
 // ─── Crop selector change → reload charts ────────────────────────

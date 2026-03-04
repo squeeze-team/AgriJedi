@@ -265,6 +265,79 @@
       text-align: center;
       padding: 20px;
     }
+
+    /* ── Crop Analysis Section ─────────────────── */
+    .analysis-section {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 28px 28px;
+    }
+    .analysis-section h2 {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 16px;
+    }
+    .analysis-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 14px;
+    }
+    .crop-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .crop-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .crop-card-header h3 {
+      font-size: 15px;
+      font-weight: 700;
+      text-transform: capitalize;
+    }
+    .crop-card-header .area-badge {
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: var(--accent-light);
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .crop-card .sub-label {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .crop-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px 12px;
+      font-size: 13px;
+    }
+    .crop-stats dt { color: var(--text-muted); }
+    .crop-stats dd { font-weight: 600; margin: 0; }
+    .yield-badge {
+      display: inline-block;
+      margin-top: 4px;
+      padding: 3px 10px;
+      border-radius: 16px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .yield-above { background: #f0fdf4; color: var(--green); }
+    .yield-near  { background: #fffbeb; color: var(--orange); }
+    .yield-below { background: #fef2f2; color: var(--red); }
+    #analysisLoading {
+      color: var(--text-muted);
+      font-size: 14px;
+      padding: 20px;
+      text-align: center;
+    }
   </style>
 </head>
 <body>
@@ -379,6 +452,17 @@
           <div class="sat-placeholder" id="ph-overlay">—</div>
           <img id="sat-overlay" style="display:none;" alt="Overlay" />
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Crop-Level NDVI Analysis ────────────────── -->
+  <div class="analysis-section">
+    <h2>🔬 Per-Crop NDVI Analysis & Yield Proxy</h2>
+    <div id="analysisLoading" style="display:none;">Analysing crop distribution & NDVI…</div>
+    <div class="analysis-grid" id="analysisGrid">
+      <div style="padding:20px;color:var(--text-muted);font-size:13px;grid-column:1/-1;">
+        Load satellite imagery above to run per-crop analysis.
       </div>
     </div>
   </div>
