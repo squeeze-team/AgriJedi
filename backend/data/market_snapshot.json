@@ -1,0 +1,47 @@
+{
+  "as_of": "2026-03-05",
+  "data_through": "2026-03-05",
+  "assets": {
+    "corn_fut": {
+      "latest_close": 453.5,
+      "ret_1w": 0.0457,
+      "ret_4w": 0.0561,
+      "ret_12w": 0.0308,
+      "vol_4w": 0.0233,
+      "vol_8w": 0.0167
+    },
+    "eurusd": {
+      "latest_close": 1.1616,
+      "ret_1w": -0.0122,
+      "ret_4w": -0.0179,
+      "ret_12w": -0.0104,
+      "vol_4w": 0.0066,
+      "vol_8w": 0.0093
+    },
+    "oil_wti": {
+      "latest_close": 78.87,
+      "ret_1w": 0.1019,
+      "ret_4w": 0.2033,
+      "ret_12w": 0.3279,
+      "vol_4w": 0.0533,
+      "vol_8w": 0.0399
+    },
+    "us10y_yield": {
+      "latest_close": 4.146,
+      "ret_1w": 0.0239,
+      "ret_4w": -0.0125,
+      "ret_12w": -0.0086,
+      "vol_4w": 0.0244,
+      "vol_8w": 0.0188
+    },
+    "wheat_fut": {
+      "latest_close": 585.25,
+      "ret_1w": 0.0185,
+      "ret_4w": 0.1015,
+      "ret_12w": 0.1168,
+      "vol_4w": 0.0141,
+      "vol_8w": 0.0133
+    }
+  },
+  "summary_for_prompt": "- Corn futures (CBOT): 453.5  (4w return +5.6%, 4w vol 2.3%)\n- EUR/USD: 1.1616  (4w return -1.8%, 4w vol 0.7%)\n- WTI Crude Oil: 78.87  (4w return +20.3%, 4w vol 5.3%)\n- US 10Y Treasury Yield: 4.146  (4w return -1.2%, 4w vol 2.4%)\n- Wheat futures (CBOT): 585.25  (4w return +10.2%, 4w vol 1.4%)"
+}

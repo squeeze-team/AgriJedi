@@ -15,7 +15,12 @@ Endpoints:
 Agent-oriented (POST JSON body, single-call):
   POST /agent/yield-analysis   → per-crop NDVI + yield forecast for a bbox
   POST /agent/market-overview  → 3-crop price history + weather trends
+  POST /agent/market-signals   → financial market signals (futures, FX, oil, rates, WASDE)
+  GET  /agent/system-prompt    → macro context blob for LLM system prompt
+  GET  /market/weekly-chart    → weekly price series for frontend charts
 """
+
+import pandas as pd
 
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +32,14 @@ from config import CROP_CONFIG, DEFAULT_CROP, FRANCE_BBOX
 from services.s2_pc import get_ndvi_stats, get_s2_overlay_png, get_satellite_visualization
 from services.clms_wms import get_crop_type_overlay
 from services.crop_ndvi_analysis import analyze_crop_ndvi, _CROP_NDVI_PROFILES
+from services.market_finance import (
+    build_market_signals_response,
+    get_market_snapshot,
+    get_market_daily,
+    get_latest_wasde,
+    supply_demand_regime,
+    ASSET_LABELS,
+)
 from services.weather_power import get_weather_monthly
 from services.faostat import get_yield_history, compute_yield_features
 from services.prices_worldbank import get_price_history, compute_price_features
@@ -56,7 +69,7 @@ def root():
 
 
 # ─── Available crops ─────────────────────────────────────────────
-@app.get("/crops")
+@app.post("/crops")
 def list_crops():
     """Return the list of supported crops and their metadata."""
     return {
@@ -68,56 +81,92 @@ def list_crops():
     }
 
 
+# ─── Request models for non-agent endpoints ─────────────────────
+
+class MapOverlayRequest(BaseModel):
+    bbox: list[float] = Field(
+        default_factory=lambda: FRANCE_BBOX[:],
+        description="Bounding box [west, south, east, north] in EPSG:4326",
+        min_length=4, max_length=4,
+    )
+    date: str = Field(default="2024-06-01/2024-09-01", description="Date range for Sentinel-2 search")
+    width: int = Field(default=512, ge=64, le=2048)
+    height: int = Field(default=512, ge=64, le=2048)
+
+
+class SatelliteViewRequest(BaseModel):
+    bbox: list[float] = Field(
+        default=[4.67, 44.71, 4.97, 45.01],
+        description="Bounding box [west, south, east, north] in EPSG:4326",
+        min_length=4, max_length=4,
+    )
+    date: str = Field(default="2025-06-01/2025-09-01", description="Date range for Sentinel-2 search")
+    layer: str = Field(default="rgb", description="Visualisation type: rgb, false_color, ndvi, overlay")
+    width: int = Field(default=600, ge=64, le=2048)
+    height: int = Field(default=600, ge=64, le=2048)
+
+
+class WeatherRequest(BaseModel):
+    start: str = Field(default="20230101", description="Start date (yyyyMMdd)")
+    end: str = Field(default="20241231", description="End date (yyyyMMdd)")
+
+
+class CropQueryRequest(BaseModel):
+    crop: str = Field(default="wheat", description="Crop name (wheat, maize, grape)")
+
+
+class YieldPredictionRequest(BaseModel):
+    crop: str = Field(default="wheat", description="Crop name")
+    country: str = Field(default="France", description="Country name")
+
+
+class NdviStatsRequest(BaseModel):
+    crop: str = Field(default="wheat", description="Crop name")
+    date: str = Field(default="2024-04-01/2024-07-01", description="Date range for NDVI calculation")
+
+
+class CropNdviRequest(BaseModel):
+    bbox: list[float] = Field(
+        default=[4.67, 44.71, 4.97, 45.01],
+        description="Bounding box [west, south, east, north] in EPSG:4326",
+        min_length=4, max_length=4,
+    )
+    date: str = Field(default="2025-06-01/2025-09-01", description="Date range for Sentinel-2 search")
+    resolution: int = Field(default=400, ge=100, le=1000, description="Grid resolution (pixels)")
+
+
+class SystemPromptRequest(BaseModel):
+    pass  # no params needed; body can be empty {}
+
+
+class WeeklyChartRequest(BaseModel):
+    symbol: str = Field(default="wheat_fut", description="Asset symbol: wheat_fut, corn_fut, eurusd, oil_wti, us10y_yield")
+    weeks: int = Field(default=52, ge=4, le=200, description="Number of weeks")
+
+
 # ─── Map overlay ─────────────────────────────────────────────────
-@app.get("/map/overlay")
-async def map_overlay(
-    bbox: str = Query(
-        default=",".join(map(str, FRANCE_BBOX)),
-        description="west,south,east,north in EPSG:4326",
-    ),
-    date: str = Query(
-        default="2024-06-01/2024-09-01",
-        description="Date or date range for Sentinel-2 search",
-    ),
-    width: int = Query(default=512, ge=64, le=2048),
-    height: int = Query(default=512, ge=64, le=2048),
-):
+@app.post("/map/overlay")
+async def map_overlay(req: MapOverlayRequest):
     """
     Return a PNG image combining Sentinel-2 RGB with
     the CLMS Crop Types overlay.
     """
-    try:
-        west, south, east, north = [float(v) for v in bbox.split(",")]
-    except Exception:
-        raise HTTPException(400, "bbox must be west,south,east,north")
+    if len(req.bbox) != 4:
+        raise HTTPException(400, "bbox must be [west, south, east, north]")
+    west, south, east, north = req.bbox
 
     png_bytes = get_s2_overlay_png(
         bbox=[west, south, east, north],
-        date_range=date,
-        width=width,
-        height=height,
+        date_range=req.date,
+        width=req.width,
+        height=req.height,
     )
     return StreamingResponse(png_bytes, media_type="image/png")
 
 
 # ─── Satellite visualisation panel ────────────────────────────────
-@app.get("/satellite/view")
-async def satellite_view(
-    bbox: str = Query(
-        default="4.67,44.71,4.97,45.01",
-        description="west,south,east,north in EPSG:4326",
-    ),
-    date: str = Query(
-        default="2025-06-01/2025-09-01",
-        description="Date range for Sentinel-2 search",
-    ),
-    layer: str = Query(
-        default="rgb",
-        description="Visualisation type: rgb, false_color, ndvi, overlay",
-    ),
-    width: int = Query(default=600, ge=64, le=2048),
-    height: int = Query(default=600, ge=64, le=2048),
-):
+@app.post("/satellite/view")
+async def satellite_view(req: SatelliteViewRequest):
     """
     Return a single satellite visualisation PNG for the given bbox and layer type.
 
@@ -128,20 +177,18 @@ async def satellite_view(
       - **overlay** — RGB + CLMS Crop Types
     """
     valid_layers = ("rgb", "false_color", "ndvi", "overlay")
-    if layer not in valid_layers:
-        raise HTTPException(400, f"Unknown layer '{layer}'. Use: {valid_layers}")
-
-    try:
-        west, south, east, north = [float(v) for v in bbox.split(",")]
-    except Exception:
-        raise HTTPException(400, "bbox must be west,south,east,north")
+    if req.layer not in valid_layers:
+        raise HTTPException(400, f"Unknown layer '{req.layer}'. Use: {valid_layers}")
+    if len(req.bbox) != 4:
+        raise HTTPException(400, "bbox must be [west, south, east, north]")
+    west, south, east, north = req.bbox
 
     buf, meta = get_satellite_visualization(
         bbox=[west, south, east, north],
-        date_range=date,
-        vis_type=layer,
-        width=width,
-        height=height,
+        date_range=req.date,
+        vis_type=req.layer,
+        width=req.width,
+        height=req.height,
     )
     return StreamingResponse(
         buf,
@@ -155,60 +202,50 @@ async def satellite_view(
 
 
 # ─── Weather time-series ─────────────────────────────────────────
-@app.get("/weather/france")
-async def weather_france(
-    start: str = Query(default="20230101", description="yyyyMMdd"),
-    end: str = Query(default="20241231", description="yyyyMMdd"),
-):
+@app.post("/weather/france")
+async def weather_france(req: WeatherRequest):
     """Return monthly-aggregated weather data for France (3×3 grid mean)."""
-    data = get_weather_monthly(start_date=start, end_date=end)
+    data = get_weather_monthly(start_date=req.start, end_date=req.end)
     return JSONResponse(content=data)
 
 
 # ─── Yield prediction ────────────────────────────────────────────
-@app.get("/predict/yield")
-async def yield_prediction(
-    crop: str = Query(default=DEFAULT_CROP),
-    country: str = Query(default="France"),
-):
+@app.post("/predict/yield")
+async def yield_prediction(req: YieldPredictionRequest):
     """Predict national yield anomaly for the given crop."""
-    if crop not in CROP_CONFIG:
-        raise HTTPException(400, f"Unknown crop '{crop}'. Available: {list(CROP_CONFIG)}")
+    if req.crop not in CROP_CONFIG:
+        raise HTTPException(400, f"Unknown crop '{req.crop}'. Available: {list(CROP_CONFIG)}")
 
-    features = build_feature_vector(crop=crop, country=country)
-    result = predict_yield(features, crop=crop)
+    features = build_feature_vector(crop=req.crop, country=req.country)
+    result = predict_yield(features, crop=req.crop)
     return JSONResponse(content=result)
 
 
 # ─── Price prediction ────────────────────────────────────────────
-@app.get("/predict/price")
-async def price_prediction(
-    crop: str = Query(default=DEFAULT_CROP),
-):
+@app.post("/predict/price")
+async def price_prediction(req: CropQueryRequest):
     """Forecast 3-month price direction for the given crop."""
-    if crop not in CROP_CONFIG:
-        raise HTTPException(400, f"Unknown crop '{crop}'. Available: {list(CROP_CONFIG)}")
+    if req.crop not in CROP_CONFIG:
+        raise HTTPException(400, f"Unknown crop '{req.crop}'. Available: {list(CROP_CONFIG)}")
 
-    features = build_feature_vector(crop=crop)
-    result = predict_price(features, crop=crop)
+    features = build_feature_vector(crop=req.crop)
+    result = predict_price(features, crop=req.crop)
     return JSONResponse(content=result)
 
 
 # ─── Price history ───────────────────────────────────────────────
-@app.get("/prices/history")
-async def price_history(
-    crop: str = Query(default=DEFAULT_CROP),
-):
+@app.post("/prices/history")
+async def price_history(req: CropQueryRequest):
     """Return monthly commodity price time-series for the given crop."""
-    if crop not in CROP_CONFIG:
-        raise HTTPException(400, f"Unknown crop '{crop}'. Available: {list(CROP_CONFIG)}")
+    if req.crop not in CROP_CONFIG:
+        raise HTTPException(400, f"Unknown crop '{req.crop}'. Available: {list(CROP_CONFIG)}")
 
-    df = get_price_history(crop)
+    df = get_price_history(req.crop)
     if df.empty:
         return JSONResponse(content={"dates": [], "prices": []})
 
     return JSONResponse(content={
-        "crop": crop,
+        "crop": req.crop,
         "dates": df["date"].dt.strftime("%Y-%m").tolist(),
         "prices": df["price"].round(2).tolist(),
         "unit": "USD/mt",
@@ -216,20 +253,18 @@ async def price_history(
 
 
 # ─── Yield history ──────────────────────────────────────────────
-@app.get("/yield/history")
-async def yield_history(
-    crop: str = Query(default=DEFAULT_CROP),
-):
+@app.post("/yield/history")
+async def yield_history(req: CropQueryRequest):
     """Return annual yield time-series for the given crop in France."""
-    if crop not in CROP_CONFIG:
-        raise HTTPException(400, f"Unknown crop '{crop}'. Available: {list(CROP_CONFIG)}")
+    if req.crop not in CROP_CONFIG:
+        raise HTTPException(400, f"Unknown crop '{req.crop}'. Available: {list(CROP_CONFIG)}")
 
-    df = get_yield_history(crop)
+    df = get_yield_history(req.crop)
     if df.empty:
         return JSONResponse(content={"years": [], "yields": []})
 
     return JSONResponse(content={
-        "crop": crop,
+        "crop": req.crop,
         "country": "France",
         "years": df["year"].tolist(),
         "yields": df["yield_ton_ha"].round(3).tolist(),
@@ -238,51 +273,31 @@ async def yield_history(
 
 
 # ─── NDVI statistics ────────────────────────────────────────────
-@app.get("/ndvi/stats")
-async def ndvi_stats(
-    crop: str = Query(default=DEFAULT_CROP),
-    date: str = Query(
-        default="2024-04-01/2024-07-01",
-        description="Date range for NDVI calculation",
-    ),
-):
+@app.post("/ndvi/stats")
+async def ndvi_stats(req: NdviStatsRequest):
     """Return NDVI summary statistics (with fallback to bundled data)."""
-    if crop not in CROP_CONFIG:
-        raise HTTPException(400, f"Unknown crop '{crop}'. Available: {list(CROP_CONFIG)}")
+    if req.crop not in CROP_CONFIG:
+        raise HTTPException(400, f"Unknown crop '{req.crop}'. Available: {list(CROP_CONFIG)}")
 
-    stats = get_ndvi_stats(date_range=date, crop=crop)
-    return JSONResponse(content={"crop": crop, **stats})
+    stats = get_ndvi_stats(date_range=req.date, crop=req.crop)
+    return JSONResponse(content={"crop": req.crop, **stats})
 
 
 # ─── Crop-level NDVI analysis ────────────────────────────────────
-@app.get("/analysis/crop-ndvi")
-async def crop_ndvi_analysis(
-    bbox: str = Query(
-        default="4.67,44.71,4.97,45.01",
-        description="west,south,east,north in EPSG:4326",
-    ),
-    date: str = Query(
-        default="2025-06-01/2025-09-01",
-        description="Date range for Sentinel-2 search",
-    ),
-    resolution: int = Query(
-        default=400, ge=100, le=1000,
-        description="Grid resolution (pixels, width = height)",
-    ),
-):
+@app.post("/analysis/crop-ndvi")
+async def crop_ndvi_analysis(req: CropNdviRequest):
     """
     Classify crop types via CLMS WMS colour-reverse-lookup, then
     compute per-crop NDVI statistics and a relative yield proxy.
     """
-    try:
-        west, south, east, north = [float(v) for v in bbox.split(",")]
-    except Exception:
-        raise HTTPException(400, "bbox must be west,south,east,north")
+    if len(req.bbox) != 4:
+        raise HTTPException(400, "bbox must be [west, south, east, north]")
+    west, south, east, north = req.bbox
 
     result = analyze_crop_ndvi(
         bbox=[west, south, east, north],
-        date_range=date,
-        resolution=resolution,
+        date_range=req.date,
+        resolution=req.resolution,
     )
     return JSONResponse(content=result)
 
@@ -494,6 +509,203 @@ async def agent_market_overview(req: MarketOverviewRequest):
             "stats": weather_stats,
         },
         "summary": "\n".join(summary_lines),
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Financial market signals endpoints
+# ═══════════════════════════════════════════════════════════════════
+
+
+class MarketSignalsRequest(BaseModel):
+    crop: str = Field(
+        default="wheat",
+        description="Crop focus for narrative (wheat or corn)",
+    )
+    lookback_weeks: int = Field(
+        default=52,
+        description="Number of weeks to include in weekly series (max 167)",
+        ge=4,
+        le=200,
+    )
+
+
+@app.post("/agent/market-signals")
+async def agent_market_signals(req: MarketSignalsRequest):
+    """
+    **Agent endpoint** — Financial market context for agricultural analysis.
+
+    Returns a single JSON containing:
+      - Latest prices + returns + volatility for wheat/corn futures, EUR/USD, WTI oil, US 10Y
+      - Weekly price series (for charts)
+      - USDA WASDE global stocks-to-use (wheat, corn) + supply regime
+      - Narrative bullets synthesising yield risk vs market pricing
+      - Summary text suitable for LLM system prompt injection
+    """
+    result = build_market_signals_response(
+        crop=req.crop,
+        lookback_weeks=req.lookback_weeks,
+    )
+    return JSONResponse(content=result)
+
+
+@app.post("/agent/system-prompt")
+async def agent_system_prompt(req: SystemPromptRequest = SystemPromptRequest()):
+    """
+    Returns a pre-formatted macro context block for injection into an
+    LLM system prompt. Includes latest prices, returns, vol, WASDE,
+    and key narrative bullets.
+    """
+    snapshot = get_market_snapshot()
+    assets = snapshot.get("assets", {})
+    prompt_parts = []
+
+    # Header
+    prompt_parts.append(f"## Market Context (as of {snapshot.get('as_of', 'unknown')})")
+    prompt_parts.append("")
+
+    # Latest prices table
+    prompt_parts.append("### Latest Prices & Momentum")
+    prompt_parts.append("| Asset | Close | 1w Return | 4w Return | 12w Return | 4w Vol |")
+    prompt_parts.append("|-------|-------|-----------|-----------|------------|--------|")
+    for sym, label in ASSET_LABELS.items():
+        a = assets.get(sym, {})
+        c = a.get("latest_close", "N/A")
+        r1 = f"{a['ret_1w']:+.1%}" if a.get("ret_1w") is not None else "N/A"
+        r4 = f"{a['ret_4w']:+.1%}" if a.get("ret_4w") is not None else "N/A"
+        r12 = f"{a['ret_12w']:+.1%}" if a.get("ret_12w") is not None else "N/A"
+        v4 = f"{a['vol_4w']:.1%}" if a.get("vol_4w") is not None else "N/A"
+        prompt_parts.append(f"| {label} | {c} | {r1} | {r4} | {r12} | {v4} |")
+
+    # WASDE
+    prompt_parts.append("")
+    prompt_parts.append("### Global Supply/Demand (USDA WASDE)")
+    for crop in ["wheat", "corn"]:
+        w = get_latest_wasde(crop)
+        if w:
+            regime = supply_demand_regime(w["stock_to_use"])
+            prompt_parts.append(
+                f"- {crop.capitalize()} ({w['marketing_year']}): "
+                f"stocks-to-use {w['stock_to_use']:.1%}, regime: **{regime}**"
+            )
+
+    # Key takeaways
+    prompt_parts.append("")
+    prompt_parts.append("### Key Takeaways")
+    signals = build_market_signals_response(crop="wheat", lookback_weeks=12)
+    for n in signals.get("narrative", []):
+        prompt_parts.append(f"- {n}")
+
+    full_prompt = "\n".join(prompt_parts)
+
+    return JSONResponse(content={
+        "endpoint": "/agent/system-prompt",
+        "format": "markdown",
+        "content": full_prompt,
+        "assets": assets,
+        "wasde": {
+            "wheat": get_latest_wasde("wheat"),
+            "corn": get_latest_wasde("corn"),
+        },
+    })
+
+
+@app.post("/market/weekly-chart")
+async def market_weekly_chart(req: WeeklyChartRequest):
+    """
+    Return weekly close series for a single asset (for frontend charts).
+    """
+    from services.market_finance import get_market_weekly_wide
+    wide = get_market_weekly_wide()
+    if wide.empty:
+        return JSONResponse(content={"weeks": [], "close": [], "ret_1w": []})
+    recent = wide.tail(req.weeks)
+    col_close = f"{req.symbol}_close"
+    col_ret = f"{req.symbol}_ret_1w"
+    col_vol = f"{req.symbol}_vol_4w"
+    weeks_list = recent["week_start"].dt.strftime("%Y-%m-%d").tolist()
+    close_list = [round(float(v), 2) if pd.notna(v) else None for v in recent.get(col_close, [])]
+    ret_list = [round(float(v), 4) if pd.notna(v) else None for v in recent.get(col_ret, [])]
+    vol_list = [round(float(v), 4) if pd.notna(v) else None for v in recent.get(col_vol, [])]
+    return JSONResponse(content={
+        "symbol": req.symbol,
+        "label": ASSET_LABELS.get(req.symbol, req.symbol),
+        "weeks": weeks_list,
+        "close": close_list,
+        "ret_1w": ret_list,
+        "vol_4w": vol_list,
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Pre-built crop intelligence reports
+# ═══════════════════════════════════════════════════════════════════
+
+import os as _os
+
+_REPORTS_DIR = _os.path.join(_os.path.dirname(__file__), "data", "reports")
+_VALID_CROPS_REPORT = {"wheat", "corn", "grape"}
+
+# Map of accepted crop name aliases → canonical file stem
+_CROP_REPORT_ALIASES: dict[str, str] = {
+    "wheat": "wheat",
+    "blé": "wheat",
+    "ble": "wheat",
+    "corn": "corn",
+    "maize": "corn",
+    "maïs": "corn",
+    "mais": "corn",
+    "grape": "grape",
+    "raisin": "grape",
+    "wine": "grape",
+    "vin": "grape",
+}
+
+
+class CropReportRequest(BaseModel):
+    crop: str = Field(
+        default="wheat",
+        description="Crop name: wheat, corn/maize, grape (French aliases accepted)",
+    )
+
+
+@app.post("/agent/crop-report")
+async def agent_crop_report(req: CropReportRequest):
+    """
+    **Agent endpoint** — Return a pre-built high-level intelligence brief
+    for a single crop (wheat, corn, or grape).
+
+    The report is a comprehensive markdown document synthesising:
+      - Executive summary with overall signal
+      - Price & futures data (tables)
+      - WASDE supply/demand (where applicable)
+      - France yield history by département
+      - Weather risk analysis
+      - Conclusion & risk assessment
+
+    Designed for direct consumption by an LLM agent — no further
+    data parsing or table analysis required.
+    """
+    canonical = _CROP_REPORT_ALIASES.get(req.crop.lower().strip())
+    if canonical is None:
+        raise HTTPException(
+            400,
+            f"Unknown crop '{req.crop}'. "
+            f"Available: wheat, corn (maize), grape. "
+            f"French aliases: blé, maïs, raisin/vin.",
+        )
+    report_path = _os.path.join(_REPORTS_DIR, f"{canonical}_analysis.md")
+    if not _os.path.isfile(report_path):
+        raise HTTPException(500, f"Report file missing for {canonical}")
+
+    with open(report_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    return JSONResponse(content={
+        "endpoint": "POST /agent/crop-report",
+        "crop": canonical,
+        "format": "markdown",
+        "report": content,
     })
 
 
