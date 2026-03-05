@@ -146,6 +146,12 @@ body {
   background: #111827;
 }
 
+.chat-dots-inline {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+}
+
 .chat-dots span:nth-child(2) {
   animation-delay: 0.15s;
 }
@@ -180,4 +186,70 @@ body {
   to {
     transform: rotate(360deg);
   }
+}
+
+.chat-markdown {
+  font-size: 14px;
+  line-height: 1.45;
+  color: inherit;
+  word-break: break-word;
+}
+
+.chat-markdown p {
+  margin: 0 0 0.45rem;
+}
+
+.chat-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+  margin: 0.35rem 0 0.45rem 1.1rem;
+  padding: 0;
+}
+
+.chat-markdown li {
+  margin: 0.2rem 0;
+}
+
+.chat-markdown code {
+  background: rgba(15, 23, 42, 0.08);
+  border-radius: 6px;
+  padding: 0.08rem 0.35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.84em;
+}
+
+.chat-markdown pre {
+  margin: 0.4rem 0;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.9);
+  color: #f8fafc;
+  padding: 0.6rem 0.75rem;
+  overflow-x: auto;
+}
+
+.chat-markdown pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.chat-markdown a {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
+.chat-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.4rem 0;
+  font-size: 12px;
+}
+
+.chat-markdown th,
+.chat-markdown td {
+  border: 1px solid #cbd5e1;
+  padding: 0.2rem 0.35rem;
 }

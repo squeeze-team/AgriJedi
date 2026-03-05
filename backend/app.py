@@ -23,12 +23,18 @@ Agent-oriented (POST JSON body, single-call):
 
 import pandas as pd
 import json
+import asyncio
 from typing import Literal
 
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - optional dependency
+    def load_dotenv(*_args, **_kwargs):
+        return False
 
 from config import CROP_CONFIG, DEFAULT_CROP, FRANCE_BBOX
 
@@ -46,10 +52,12 @@ from services.market_finance import (
 from services.weather_power import get_weather_monthly
 from services.faostat import get_yield_history, compute_yield_features
 from services.prices_worldbank import get_price_history, compute_price_features
-from services.chat_langgraph import stream_chat_events
+from services.agent_full import stream_agent_events
 
 from features.build_features import build_feature_vector
 from features.models import predict_yield, predict_price
+
+load_dotenv()
 
 app = FastAPI(
     title="AgriIntel Demo",
@@ -94,8 +102,26 @@ async def chat_stream(payload: ChatStreamRequest):
 
     async def sse_stream():
         try:
-            history = [item.model_dump() for item in payload.history]
-            async for evt in stream_chat_events(payload.message, history):
+            # Immediate ack event so frontend can switch from "Submitting request" instantly.
+            ack_json = json.dumps(
+                {"type": "stage", "stage": "backend", "label": "Connected to backend stream"},
+                ensure_ascii=False,
+            )
+            yield f"data: {ack_json}\n\n"
+            await asyncio.sleep(0)
+
+            history_text = ""
+            if payload.history:
+                turns = []
+                for item in payload.history[-6:]:
+                    turns.append(f"{item.role}: {item.content}")
+                history_text = "\n".join(turns)
+
+            merged_query = payload.message if not history_text else (
+                f"Conversation context:\n{history_text}\n\nUser request:\n{payload.message}"
+            )
+
+            async for evt in stream_agent_events(merged_query):
                 payload_json = json.dumps(evt, ensure_ascii=False)
                 yield f"data: {payload_json}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"

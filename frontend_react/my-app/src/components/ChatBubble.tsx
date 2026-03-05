@@ -6,6 +6,8 @@ import {
   MessageList,
   Message,
 } from '@chatscope/chat-ui-kit-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { API_BASE } from '../services/api';
 
 type ChatMsg = {
@@ -109,26 +111,34 @@ export function ChatBubble() {
       const decoder = new TextDecoder('utf-8');
       let buffer = '';
       let receivedDelta = false;
+      let streamDone = false;
 
-      while (true) {
+      while (!streamDone) {
         const { value, done } = await reader.read();
         if (done) {
           break;
         }
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
+        const events = buffer.split('\n\n');
+        buffer = events.pop() ?? '';
 
-        for (const rawLine of lines) {
-          const line = rawLine.trim();
-          if (!line || !line.startsWith('data:')) {
+        for (const rawEvent of events) {
+          const lines = rawEvent.split('\n');
+          const dataLines = lines
+            .map((line) => line.trim())
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).trim());
+
+          if (dataLines.length === 0) {
             continue;
           }
-          const payload = line.slice(5).trim();
+
+          const payload = dataLines.join('\n');
           if (!payload) {
             continue;
           }
+
           const evt = JSON.parse(payload) as {
             type: string;
             delta?: string;
@@ -141,8 +151,13 @@ export function ChatBubble() {
           } else if (evt.type === 'stage' && evt.label) {
             setCurrentStage(evt.label);
           } else if (evt.type === 'done') {
+            streamDone = true;
             setCurrentStage(null);
+            await reader.cancel();
+            break;
           } else if (evt.type === 'error') {
+            streamDone = true;
+            await reader.cancel();
             throw new Error(evt.error || 'Streaming failed');
           }
         }
@@ -222,13 +237,27 @@ export function ChatBubble() {
                     <Message
                       key={msg.id}
                       model={{
-                        message: msg.message,
+                        message: '',
                         sender: msg.sender,
                         direction: msg.direction,
                         position: 'single',
+                        type: 'custom',
                       }}
                     >
                       <Avatar name={msg.sender} src={msg.direction === 'incoming' ? assistantAvatar : userAvatar} />
+                      <Message.CustomContent>
+                        <div className="chat-markdown">
+                          {msg.direction === 'incoming' && isTyping && msg.message.trim().length === 0 ? (
+                            <span className="chat-dots chat-dots-dark chat-dots-inline" aria-label="Assistant is typing">
+                              <span />
+                              <span />
+                              <span />
+                            </span>
+                          ) : (
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.message || ' '}</ReactMarkdown>
+                          )}
+                        </div>
+                      </Message.CustomContent>
                     </Message>
                   ))}
                 </MessageList>
@@ -257,13 +286,6 @@ export function ChatBubble() {
                 placeholder="Ask anything..."
                 className="w-full bg-transparent px-2 text-sm text-slate-900 outline-none placeholder:text-slate-400"
               />
-              {isTyping && (
-                <span className="chat-dots chat-dots-dark" aria-label="Assistant is typing">
-                  <span />
-                  <span />
-                  <span />
-                </span>
-              )}
               <button
                 type="button"
                 onClick={handleSend}
