@@ -12,14 +12,15 @@ Endpoints:
   GET /yield/history           → annual yield time-series
   GET /ndvi/stats              → NDVI summary statistics
 
-Agent-oriented (structured JSON, single-call):
-  GET /agent/yield-analysis    → per-crop NDVI + yield forecast for a bbox
-  GET /agent/market-overview   → 3-crop price history + weather trends
+Agent-oriented (POST JSON body, single-call):
+  POST /agent/yield-analysis   → per-crop NDVI + yield forecast for a bbox
+  POST /agent/market-overview  → 3-crop price history + weather trends
 """
 
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
+from pydantic import BaseModel, Field
 
 from config import CROP_CONFIG, DEFAULT_CROP, FRANCE_BBOX
 
@@ -287,20 +288,36 @@ async def crop_ndvi_analysis(
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Agent-oriented endpoints — consolidated JSON, one-call-per-task
+# Agent-oriented endpoints — POST JSON, one-call-per-task
 # ═══════════════════════════════════════════════════════════════════
 
-@app.get("/agent/yield-analysis")
-async def agent_yield_analysis(
-    bbox: str = Query(
-        default="4.67,44.71,4.97,45.01",
-        description="Bounding box: west,south,east,north in EPSG:4326",
-    ),
-    date: str = Query(
+
+class YieldAnalysisRequest(BaseModel):
+    bbox: list[float] = Field(
+        default=[4.67, 44.71, 4.97, 45.01],
+        description="Bounding box [west, south, east, north] in EPSG:4326",
+        min_length=4,
+        max_length=4,
+    )
+    date: str = Field(
         default="2025-06-01/2025-09-01",
-        description="Sentinel-2 date range for NDVI (YYYY-MM-DD/YYYY-MM-DD)",
-    ),
-):
+        description="Sentinel-2 date range (YYYY-MM-DD/YYYY-MM-DD)",
+    )
+
+
+class MarketOverviewRequest(BaseModel):
+    start: str = Field(
+        default="20230101",
+        description="Weather period start date (yyyyMMdd)",
+    )
+    end: str = Field(
+        default="20251231",
+        description="Weather period end date (yyyyMMdd)",
+    )
+
+
+@app.post("/agent/yield-analysis")
+async def agent_yield_analysis(req: YieldAnalysisRequest):
     """
     **Agent endpoint** — Per-crop yield analysis for a geographic region.
 
@@ -312,12 +329,11 @@ async def agent_yield_analysis(
 
     Crops covered: wheat, maize, grape (+ other_cereal, grassland, other).
     """
-    try:
-        west, south, east, north = [float(v) for v in bbox.split(",")]
-    except Exception:
-        raise HTTPException(400, "bbox must be west,south,east,north (EPSG:4326)")
-
-    bbox_list = [west, south, east, north]
+    bbox_list = req.bbox
+    date = req.date
+    if len(bbox_list) != 4:
+        raise HTTPException(400, "bbox must be [west, south, east, north]")
+    west, south, east, north = bbox_list
     analysis = analyze_crop_ndvi(bbox=bbox_list, date_range=date)
 
     # Build a concise text summary for LLM agents
@@ -376,17 +392,8 @@ async def agent_yield_analysis(
     })
 
 
-@app.get("/agent/market-overview")
-async def agent_market_overview(
-    start: str = Query(
-        default="20230101",
-        description="Weather start date (yyyyMMdd)",
-    ),
-    end: str = Query(
-        default="20251231",
-        description="Weather end date (yyyyMMdd)",
-    ),
-):
+@app.post("/agent/market-overview")
+async def agent_market_overview(req: MarketOverviewRequest):
     """
     **Agent endpoint** — Multi-crop price history + weather trends in one call.
 
@@ -397,6 +404,8 @@ async def agent_market_overview(
       - Weather statistics (avg temp, total precip, heat-stress months)
       - Summary text suitable for LLM consumption
     """
+    start = req.start
+    end = req.end
     # ── Collect price data for all 3 crops ──
     crop_names = ["wheat", "maize", "grape"]
     price_data: dict[str, dict] = {}
