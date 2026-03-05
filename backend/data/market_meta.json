@@ -1,0 +1,45 @@
+{
+  "downloaded_at": "2026-03-05T22:54:55.573266",
+  "source": "Yahoo Finance (yfinance)",
+  "period": {
+    "start": "2023-01-01",
+    "end": "2026-03-06"
+  },
+  "symbols": {
+    "wheat_fut": {
+      "yahoo_symbol": "ZW=F",
+      "rows": 796,
+      "start": "2023-01-03",
+      "end": "2026-03-05",
+      "latest_close": 585.25
+    },
+    "corn_fut": {
+      "yahoo_symbol": "ZC=F",
+      "rows": 796,
+      "start": "2023-01-03",
+      "end": "2026-03-05",
+      "latest_close": 453.5
+    },
+    "eurusd": {
+      "yahoo_symbol": "EURUSD=X",
+      "rows": 824,
+      "start": "2023-01-02",
+      "end": "2026-03-05",
+      "latest_close": 1.1616
+    },
+    "oil_wti": {
+      "yahoo_symbol": "CL=F",
+      "rows": 797,
+      "start": "2023-01-03",
+      "end": "2026-03-05",
+      "latest_close": 78.87
+    },
+    "us10y_yield": {
+      "yahoo_symbol": "^TNX",
+      "rows": 795,
+      "start": "2023-01-03",
+      "end": "2026-03-05",
+      "latest_close": 4.146
+    }
+  }
+}

@@ -2,7 +2,7 @@
 
 > Base URL: `http://localhost:8000`
 
-This document describes the two **agent-oriented** endpoints designed for AI agent consumption. Both return structured JSON with a `summary` field containing a human-readable text overview suitable for LLM context.
+This document describes the **agent-oriented** endpoints designed for AI agent consumption. **All endpoints use POST with JSON body** (except `GET /` health check). Responses include structured JSON with a `summary` field containing a human-readable text overview suitable for LLM context.
 
 ---
 
@@ -327,16 +327,190 @@ All fields are optional — sending an empty `{}` body uses defaults.
 ### Recommended Agent Workflow
 
 ```
-1. POST /agent/yield-analysis  {"bbox": [w,s,e,n]}
-   → Extract crop yield forecasts and NDVI health status
+1. POST /agent/crop-report  {"crop": "wheat"}
+   → Get the pre-built intelligence brief (high-level analysis with all key data)
+   → This is the FASTEST path — one call gives you executive summary,
+     price/futures tables, yield history, weather risk, and conclusions.
 
-2. POST /agent/market-overview  {}
-   → Extract price trends and weather anomalies
+2. (Optional) POST /agent/yield-analysis  {"bbox": [w,s,e,n]}
+   → If you need region-specific NDVI health and yield forecasts
 
-3. Synthesize:
-   - Compare yield_prediction.anomaly_vs_5yr_pct with price trend_direction
-   - Check weather.stats for stress indicators
-   - Generate advisory or risk assessment
+3. (Optional) POST /agent/market-signals  {"crop": "wheat"}
+   → If you need raw weekly time-series or additional narrative bullets
+
+4. (Optional) POST /agent/system-prompt  {}
+   → Get pre-formatted macro context block for system prompt injection
+
+5. Synthesize:
+   - The crop report already contains the key signals and risk assessment
+   - Cross-reference with live yield-analysis if region-specific data is needed
+   - Use market-signals for additional time-series detail
+```
+
+> **For most queries, `/agent/crop-report` alone is sufficient.** The other endpoints provide additional granularity when needed.
+
+---
+
+## 3. POST `/agent/market-signals`
+
+**Purpose:** Return financial & commodity market signals — futures prices, FX, oil, rates, WASDE supply/demand, and narrative bullets — for integration with yield risk analysis.
+
+### Request Body (JSON)
+
+```json
+{
+  "crop": "wheat",
+  "lookback_weeks": 52
+}
+```
+
+| Field             | Type     | Required | Default   | Description                                |
+|-------------------|----------|----------|-----------|--------------------------------------------|
+| `crop`            | `string` | No       | `"wheat"` | Crop focus for narrative (`wheat` or `corn`) |
+| `lookback_weeks`  | `int`    | No       | `52`      | Weeks to include in weekly series (4–200)   |
+
+### Response Fields
+
+| Field                  | Description                                                       |
+|------------------------|-------------------------------------------------------------------|
+| `assets`               | Per-asset latest close, 1w/4w/12w returns, 4w/8w volatility       |
+| `weekly_series`        | Weekly close arrays for all assets (for charting)                  |
+| `supply_demand`        | WASDE stocks-to-use for wheat & corn + regime (tight/normal/loose) |
+| `narrative`            | Auto-generated bullet points summarising market conditions         |
+| `summary_for_prompt`   | Compact one-liner summary suitable for system prompt injection     |
+
+### Example `curl`
+
+```bash
+curl -X POST http://localhost:8000/agent/market-signals \
+  -H "Content-Type: application/json" \
+  -d '{"crop": "wheat", "lookback_weeks": 24}'
+```
+
+### Assets Included
+
+| Key           | Source      | Unit              |
+|---------------|-------------|-------------------|
+| `wheat_fut`   | CBOT ZW=F   | USD cents/bushel  |
+| `corn_fut`    | CBOT ZC=F   | USD cents/bushel  |
+| `eurusd`      | EURUSD=X    | USD per EUR       |
+| `oil_wti`     | CL=F        | USD/barrel        |
+| `us10y_yield` | ^TNX        | % yield           |
+
+---
+
+## 4. POST `/agent/system-prompt`
+
+**Purpose:** Return a pre-formatted markdown block containing all current market context, suitable for direct injection into an LLM system prompt.
+
+### Request Body (JSON)
+
+```json
+{}
+```
+
+No parameters required — send an empty `{}` body.
+
+### Example `curl`
+
+```bash
+curl -X POST http://localhost:8000/agent/system-prompt \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+### Response Fields
+
+| Field     | Description                                                        |
+|-----------|--------------------------------------------------------------------|
+| `format`  | Always `"markdown"`                                                |
+| `content` | Full markdown text (prices table + WASDE + narratives + guidelines)|
+| `assets`  | Raw asset data (same as snapshot)                                  |
+| `wasde`   | Latest WASDE data for wheat and corn                               |
+
+---
+
+## 5. POST `/agent/crop-report`
+
+**Purpose:** Return a pre-built, high-level intelligence brief for a single crop. Each report is a comprehensive markdown document synthesising executive summary, price & futures data, WASDE supply/demand, France yield history by département, weather risk analysis, and a conclusion with risk assessment.
+
+**This is the recommended first-call endpoint for AI agents** — one request provides a complete analysis that requires no further data parsing.
+
+### Request Body (JSON)
+
+```json
+{
+  "crop": "wheat"
+}
+```
+
+| Field  | Type     | Required | Default   | Description                                        |
+|--------|----------|----------|-----------|----------------------------------------------------|
+| `crop` | `string` | No       | `"wheat"` | Crop name: `wheat`, `corn`/`maize`, `grape`/`wine` |
+
+> French aliases are accepted: `blé`, `maïs`, `raisin`, `vin`.
+
+### Available Reports
+
+| Crop | Key Themes |
+|------|------------|
+| `wheat` | CBOT futures (+10.2% 4w), WASDE normal (31.9%), Paris Basin yields 7.5–8.2 t/ha, EUR weakness tailwind |
+| `corn` | CBOT futures (+5.6% 4w), WASDE **tight** (23.3%), summer heat risk structural, oil cost pressure |
+| `grape` | No futures (OIV proxy), slow recovery from 2024 trough, vine-pull scheme, spring frost risk |
+
+### Response Fields
+
+| Field    | Description |
+|----------|-------------|
+| `crop`   | Canonical crop name (`wheat`, `corn`, `grape`) |
+| `format` | Always `"markdown"` |
+| `report` | Full markdown intelligence brief (executive summary, tables, analysis, conclusions) |
+
+### Report Structure
+
+Each report contains:
+1. **Executive Summary** — overall signal (bullish/bearish/neutral) with key reasoning
+2. **Key Signals Table** — direction indicators for futures, supply, FX, oil, weather, rates
+3. **Price & Futures Overview** — latest values, returns, volatility, spot price history
+4. **Supply & Demand (WASDE)** — stocks-to-use trend table with regime assessment (wheat/corn only)
+5. **France Yield History** — 5-year yields by département with regional analysis
+6. **Weather Risk Analysis** — heat stress, drought, frost patterns with multi-year tables
+7. **Conclusion & Risk Assessment** — factor-by-factor assessment table with overall recommendation
+
+### Example `curl`
+
+```bash
+curl -X POST http://localhost:8000/agent/crop-report \
+  -H "Content-Type: application/json" \
+  -d '{"crop": "corn"}'
+```
+
+---
+
+## 6. POST `/market/weekly-chart`
+
+**Purpose:** Return weekly close + returns + volatility for a single asset (for frontend chart rendering).
+
+### Request Body (JSON)
+
+```json
+{
+  "symbol": "wheat_fut",
+  "weeks": 52
+}
+```
+
+| Field    | Type     | Required | Default       | Description                                         |
+|----------|----------|----------|---------------|-----------------------------------------------------|
+| `symbol` | `string` | No       | `"wheat_fut"` | Asset key (wheat_fut, corn_fut, eurusd, oil_wti, us10y_yield) |
+| `weeks`  | `int`    | No       | `52`          | Number of weeks to return (4–200)                   |
+
+### Example `curl`
+
+```bash
+curl -X POST http://localhost:8000/market/weekly-chart \
+  -H "Content-Type: application/json" \
+  -d '{"symbol": "wheat_fut", "weeks": 24}'
 ```
 
 ### Error Handling
@@ -345,6 +519,7 @@ All fields are optional — sending an empty `{}` body uses defaults.
 |-----------|----------------------------------------------|
 | 200       | Success — JSON response                      |
 | 400       | Invalid bbox format or parameter              |
+| 422       | Validation error (Pydantic)                   |
 | 500       | Internal server error (service failure)       |
 
 All responses include `Content-Type: application/json`.
