@@ -10,6 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@chatscope/chat-ui-kit-react": "^2.1.1",
+    "@chatscope/chat-ui-kit-styles": "^1.4.0",
     "@tailwindcss/vite": "^4.2.1",
     "chart.js": "^4.5.1",
     "leaflet": "^1.9.4",

@@ -11,6 +11,7 @@ Endpoints:
   GET /prices/history          → monthly price time-series
   GET /yield/history           → annual yield time-series
   GET /ndvi/stats              → NDVI summary statistics
+  POST /chat/stream            → LangGraph + OpenRouter streaming chatbot
 
 Agent-oriented (POST JSON body, single-call):
   POST /agent/yield-analysis   → per-crop NDVI + yield forecast for a bbox
@@ -21,6 +22,8 @@ Agent-oriented (POST JSON body, single-call):
 """
 
 import pandas as pd
+import json
+from typing import Literal
 
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,6 +46,7 @@ from services.market_finance import (
 from services.weather_power import get_weather_monthly
 from services.faostat import get_yield_history, compute_yield_features
 from services.prices_worldbank import get_price_history, compute_price_features
+from services.chat_langgraph import stream_chat_events
 
 from features.build_features import build_feature_vector
 from features.models import predict_yield, predict_price
@@ -62,10 +66,52 @@ app.add_middleware(
 )
 
 
+class ChatHistoryItem(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ChatStreamRequest(BaseModel):
+    message: str
+    history: list[ChatHistoryItem] = []
+
+
 # ─── Health check ────────────────────────────────────────────────
 @app.get("/")
 def root():
     return {"status": "ok", "service": "AgriIntel Demo"}
+
+
+@app.post("/chat/stream")
+async def chat_stream(payload: ChatStreamRequest):
+    """
+    Stream chat response as SSE.
+    Each event:
+      data: {"type":"delta","delta":"..."}
+      data: {"type":"done"}
+      data: {"type":"error","error":"..."}
+    """
+
+    async def sse_stream():
+        try:
+            history = [item.model_dump() for item in payload.history]
+            async for evt in stream_chat_events(payload.message, history):
+                payload_json = json.dumps(evt, ensure_ascii=False)
+                yield f"data: {payload_json}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as exc:  # pragma: no cover - runtime safety for streaming
+            payload_json = json.dumps({"type": "error", "error": str(exc)}, ensure_ascii=False)
+            yield f"data: {payload_json}\n\n"
+
+    return StreamingResponse(
+        sse_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ─── Available crops ─────────────────────────────────────────────

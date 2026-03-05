@@ -36,6 +36,44 @@ export interface PricePrediction {
   explanation: string;
 }
 
+export interface CropYieldHistory {
+  [year: string]: number;
+}
+
+export interface CropYieldPredictionDetail {
+  target_year: number;
+  predicted_yield_t_ha: number;
+  anomaly_vs_5yr_pct: number;
+  avg_5yr: number;
+  trend: number;
+  confidence: number;
+  history?: CropYieldHistory;
+  departements?: string[];
+}
+
+export interface CropAnalysisItem {
+  label: string;
+  area_pct: number;
+  ndvi_mean: number;
+  ndvi_median: number;
+  ndvi_std: number;
+  ndvi_p25: number;
+  ndvi_p75: number;
+  pixel_count: number;
+  yield_index: number | null;
+  yield_index_label: string;
+  yield_prediction?: CropYieldPredictionDetail;
+}
+
+export interface CropAnalysisResponse {
+  bbox: string;
+  total_classified_pixels: number;
+  resolution_px: number;
+  item_id?: string;
+  error?: string;
+  crops: Record<string, CropAnalysisItem>;
+}
+
 function capitalize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
@@ -105,6 +143,16 @@ export async function fetchPricePrediction(crop: Crop): Promise<PricePrediction>
   } catch {
     return demoPricePrediction(crop);
   }
+}
+
+export async function fetchCropAnalysis(bbox: string, date: string): Promise<CropAnalysisResponse> {
+  const response = await fetch(
+    `${API_BASE}/analysis/crop-ndvi?bbox=${encodeURIComponent(bbox)}&date=${encodeURIComponent(date)}&resolution=400`,
+  );
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return (await response.json()) as CropAnalysisResponse;
 }
 
 export function buildSatelliteUrl(bbox: string, date: string, layer: SatelliteLayer) {

@@ -3,14 +3,18 @@ import { Header } from './components/Header';
 import { MapPanel } from './components/MapPanel';
 import { PredictionPanel } from './components/PredictionPanel';
 import { PriceChartPanel } from './components/PriceChartPanel';
+import { CropAnalysisSection } from './components/CropAnalysisSection';
+import { ChatBubble } from './components/ChatBubble';
 import { SatelliteSection } from './components/SatelliteSection';
 import { WeatherChartPanel } from './components/WeatherChartPanel';
 import {
   buildSatelliteUrl,
+  fetchCropAnalysis,
   fetchPriceHistory,
   fetchPricePrediction,
   fetchWeather,
   fetchYieldPrediction,
+  type CropAnalysisResponse,
   type Crop,
   type PriceHistoryData,
   type PricePrediction,
@@ -52,6 +56,9 @@ function App() {
   const [bbox, setBbox] = useState(defaultBbox);
   const [satDate, setSatDate] = useState(defaultDate);
   const [mapBbox, setMapBbox] = useState(defaultBbox);
+  const [analysisData, setAnalysisData] = useState<CropAnalysisResponse | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [satelliteViews, setSatelliteViews] = useState<Record<SatelliteLayer, SatelliteViewState>>(
     createInitialSatelliteViews(),
   );
@@ -82,7 +89,7 @@ function App() {
     setIsPriceLoading(false);
   }
 
-  function loadSatelliteViews() {
+  async function loadSatelliteViews() {
     setMapBbox(bbox);
 
     setSatelliteViews((previous) => {
@@ -95,6 +102,19 @@ function App() {
       });
       return next;
     });
+
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    try {
+      const result = await fetchCropAnalysis(bbox, satDate);
+      setAnalysisData(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      setAnalysisError(message);
+      setAnalysisData(null);
+    } finally {
+      setAnalysisLoading(false);
+    }
   }
 
   function setLayerStatus(layer: SatelliteLayer, status: SatelliteViewState['status']) {
@@ -133,6 +153,9 @@ function App() {
         onImageLoad={(layer) => setLayerStatus(layer, 'loaded')}
         onImageError={(layer) => setLayerStatus(layer, 'error')}
       />
+
+      <CropAnalysisSection data={analysisData} isLoading={analysisLoading} error={analysisError} />
+      <ChatBubble />
     </div>
   );
 }
