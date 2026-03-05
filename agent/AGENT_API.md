@@ -6,16 +6,23 @@ This document describes the two **agent-oriented** endpoints designed for AI age
 
 ---
 
-## 1. GET `/agent/yield-analysis`
+## 1. POST `/agent/yield-analysis`
 
 **Purpose:** Given a geographic bounding box, return per-crop NDVI health analysis and yield forecasts (in tons/hectare) for the upcoming season.
 
-### Query Parameters
+### Request Body (JSON)
 
-| Parameter | Type   | Required | Default                      | Description                                       |
-|-----------|--------|----------|------------------------------|---------------------------------------------------|
-| `bbox`    | string | No       | `4.67,44.71,4.97,45.01`     | Bounding box: `west,south,east,north` in EPSG:4326 |
-| `date`    | string | No       | `2025-06-01/2025-09-01`     | Sentinel-2 date range (`YYYY-MM-DD/YYYY-MM-DD`)   |
+```json
+{
+  "bbox": [4.67, 44.71, 4.97, 45.01],
+  "date": "2025-06-01/2025-09-01"
+}
+```
+
+| Field  | Type         | Required | Default                    | Description                                        |
+|--------|--------------|----------|----------------------------|----------------------------------------------------||
+| `bbox` | `number[4]`  | No       | `[4.67, 44.71, 4.97, 45.01]` | Bounding box `[west, south, east, north]` EPSG:4326 |
+| `date` | `string`     | No       | `"2025-06-01/2025-09-01"`  | Sentinel-2 date range (`YYYY-MM-DD/YYYY-MM-DD`)    |
 
 ### Supported Regions (preset bounding boxes)
 
@@ -32,7 +39,7 @@ This document describes the two **agent-oriented** endpoints designed for AI age
 
 ```json
 {
-  "endpoint": "/agent/yield-analysis",
+  "endpoint": "POST /agent/yield-analysis",
   "bbox": [4.67, 44.71, 4.97, 45.01],
   "date_range": "2025-06-01/2025-09-01",
   "total_classified_pixels": 160000,
@@ -199,22 +206,33 @@ The response includes a `crop_profiles` object with full phenological reference 
 
 ### Example Request
 
+```bash
+curl -X POST http://localhost:8000/agent/yield-analysis \
+  -H "Content-Type: application/json" \
+  -d '{"bbox": [4.67, 44.71, 4.97, 45.01], "date": "2025-06-01/2025-09-01"}'
 ```
-GET /agent/yield-analysis?bbox=4.67,44.71,4.97,45.01&date=2025-06-01/2025-09-01
-```
+
+All fields are optional — sending an empty `{}` body uses defaults (Rhône Valley).
 
 ---
 
-## 2. GET `/agent/market-overview`
+## 2. POST `/agent/market-overview`
 
 **Purpose:** Return price history for wheat, maize, and grape alongside France weather trends, enabling market analysis and supply-side reasoning.
 
-### Query Parameters
+### Request Body (JSON)
 
-| Parameter | Type   | Required | Default      | Description                       |
-|-----------|--------|----------|--------------|-----------------------------------|
-| `start`   | string | No       | `20230101`   | Weather period start (`yyyyMMdd`) |
-| `end`     | string | No       | `20251231`   | Weather period end (`yyyyMMdd`)   |
+```json
+{
+  "start": "20230101",
+  "end": "20251231"
+}
+```
+
+| Field   | Type     | Required | Default      | Description                       |
+|---------|----------|----------|--------------|-----------------------------------|
+| `start` | `string` | No       | `"20230101"` | Weather period start (`yyyyMMdd`) |
+| `end`   | `string` | No       | `"20251231"` | Weather period end (`yyyyMMdd`)   |
 
 > Price data always covers the full available range (Jan 2022 – Jan 2026) regardless of the start/end parameters. The start/end parameters control weather data filtering only.
 
@@ -222,7 +240,7 @@ GET /agent/yield-analysis?bbox=4.67,44.71,4.97,45.01&date=2025-06-01/2025-09-01
 
 ```json
 {
-  "endpoint": "/agent/market-overview",
+  "endpoint": "POST /agent/market-overview",
   "period": {"start": "20230101", "end": "20251231"},
   "prices": {
     "wheat": {
@@ -287,9 +305,13 @@ GET /agent/yield-analysis?bbox=4.67,44.71,4.97,45.01&date=2025-06-01/2025-09-01
 
 ### Example Request
 
+```bash
+curl -X POST http://localhost:8000/agent/market-overview \
+  -H "Content-Type: application/json" \
+  -d '{"start": "20230101", "end": "20251231"}'
 ```
-GET /agent/market-overview?start=20230101&end=20251231
-```
+
+All fields are optional — sending an empty `{}` body uses defaults.
 
 ---
 
@@ -305,10 +327,10 @@ GET /agent/market-overview?start=20230101&end=20251231
 ### Recommended Agent Workflow
 
 ```
-1. Call /agent/yield-analysis?bbox=<target_region>
+1. POST /agent/yield-analysis  {"bbox": [w,s,e,n]}
    → Extract crop yield forecasts and NDVI health status
 
-2. Call /agent/market-overview
+2. POST /agent/market-overview  {}
    → Extract price trends and weather anomalies
 
 3. Synthesize:
