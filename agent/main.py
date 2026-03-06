@@ -48,7 +48,7 @@ except ImportError:
 
 try:
     from langgraph.graph import END, START, StateGraph
-    
+
 except ImportError:
     END = "__end__"
     START = "__start__"
@@ -135,6 +135,9 @@ class AgriState(TypedDict, total=False):
     market_overview_data: Dict[str, Any]
     market_overview_debug: str
     market_overview_error: str
+    crop_report_data: Dict[str, Any]
+    crop_report_debug: str
+    crop_report_error: str
     market_focus_crop: str
     market_price_stats: Dict[str, Any]
     crop_health_data: CropHealthData
@@ -165,6 +168,7 @@ class ApiConfig(BaseModel):
     geocoding: str
     yield_analysis: str
     market_overview: str
+    crop_report: str
     weather: str
 
 
@@ -539,10 +543,40 @@ class FranceApiAdapters(BaseModel):
             return payload
         return None
 
+    def search_crop_report(self, crop: str) -> Dict[str, Any] | None:
+        if httpx is None:
+            return None
+
+        crop_report_url = os.getenv(
+            "CROP_REPORT_URL",
+            "http://localhost:8000/agent/crop-report",
+        )
+
+        with managed_http_client(
+            timeout_seconds=self.timeout_seconds,
+            headers={
+                "User-Agent": self.user_agent,
+                "Accept": "application/json",
+            },
+        ) as client:
+            response = http_request_with_fallbacks(
+                client,
+                "POST",
+                crop_report_url,
+                json_body={"crop": crop},
+            )
+            safe_raise_for_status(response)
+            payload = response.json()
+
+        if isinstance(payload, dict):
+            return payload
+        return None
+
 API_CONFIG = ApiConfig(
     geocoding="OpenStreetMap Nominatim",
     yield_analysis="AgriIntel /agent/yield-analysis",
     market_overview="AgriIntel /agent/market-overview",
+    crop_report="AgriIntel /agent/crop-report",
     weather="Meteo-France",
 )
 
@@ -590,6 +624,13 @@ AGENT_PROMPTS: Dict[str, AgentPrompt] = {
         context="You use backend /agent/market-overview output for crop price and weather trends.",
         prompt=(
             "Select the market crop that best matches query crop_type and extract price trend signals."
+        ),
+    ),
+    "crop_report_agent": AgentPrompt(
+        role="Crop Financial Intelligence Specialist",
+        context="You use backend /agent/crop-report markdown to enrich crop-specific financial context.",
+        prompt=(
+            "Fetch crop report markdown for wheat/corn/grape when available and pass it to the orchestrator."
         ),
     ),
     "climate_agent": AgentPrompt(
@@ -760,6 +801,26 @@ def map_crop_type_to_market_crop(crop_type: str) -> str:
     if crop == "grape":
         return "grape"
     return "wheat"
+
+
+def map_crop_type_to_report_crop(crop_type: str) -> str | None:
+    crop = normalize_crop_type(crop_type)
+    if crop == "wheat":
+        return "wheat"
+    if crop == "maize":
+        return "corn"
+    if crop == "grape":
+        return "grape"
+    return None
+
+
+def parse_env_int(var_name: str, default: int) -> int:
+    raw = os.getenv(var_name, str(default))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 def normalize_location_name(location: str) -> str:
@@ -1154,6 +1215,8 @@ def compose_orchestrator_facts(state: AgriState, final_action: str) -> str:
     market_stats = state.get("market_price_stats", {})
     yield_data = state.get("yield_analysis_data", {})
     market_data = state.get("market_overview_data", {})
+    crop_report_data = state.get("crop_report_data", {})
+    crop_report_md = str(crop_report_data.get("report_markdown") or "").strip()
     return "\n".join(
         [
             f"User query: {state.get('user_query', '')}",
@@ -1182,6 +1245,24 @@ def compose_orchestrator_facts(state: AgriState, final_action: str) -> str:
                 f"trend {market_stats.get('trend_direction')} | change {market_stats.get('period_change_pct')}%"
             ),
             f"Market debug: {state.get('market_overview_debug', 'n/a')}",
+            (
+                f"Crop report: {crop_report_data.get('crop', 'n/a')} | "
+                f"source {crop_report_data.get('source', 'n/a')} | "
+                f"chars {crop_report_data.get('report_char_count', 0)} | "
+                f"truncated {crop_report_data.get('truncated', False)}"
+            ),
+            f"Crop report debug: {state.get('crop_report_debug', 'n/a')}",
+            f"Crop report error: {state.get('crop_report_error', '')}",
+            (
+                f"Crop report summary: {crop_report_data.get('summary', '')}"
+                if crop_report_data
+                else "Crop report summary: "
+            ),
+            (
+                f"Crop report markdown:\n{crop_report_md}"
+                if crop_report_md
+                else "Crop report markdown: "
+            ),
             f"Yield summary: {yield_data.get('summary', '')}",
             f"Market summary: {market_data.get('summary', '')}",
             f"Recommended action: {final_action}",
@@ -1228,6 +1309,14 @@ def build_llm_advisory(
         f"Instruction: {AGENT_PROMPTS['orchestrator'].prompt}\n"
         "Write a comprehensive operations report for agriculture stakeholders. "
         "Keep facts strictly faithful to provided inputs and do not invent data.\n"
+        "Output must be polished, readable markdown with clear section headers, concise bullets, "
+        "and compact tables where useful.\n"
+        "Use the provided `Crop report markdown` as the primary source for crop-specific "
+        "financial intelligence when it is available (wheat/corn/grape). "
+        "If crop report markdown is unavailable or empty, explicitly say so and rely on "
+        "market overview + weather + yield inputs only.\n"
+        "Do not copy long verbatim passages from the markdown report; synthesize key signals "
+        "into concise, decision-oriented statements.\n"
         "Required output format (markdown):\n"
         "1) Executive Summary (3-5 sentences)\n"
         "2) Parsed User Intent\n"
@@ -1238,6 +1327,16 @@ def build_llm_advisory(
         "7) Recommended Action Plan\n"
         "8) Risk Triggers to Watch (next planning horizon)\n"
         "9) Confidence & Data Quality Notes\n"
+        "If yield analysis indicates the requested crop is not detected in the bbox/date "
+        "(for example `selection_reason=requested_crop_not_detected`, "
+        "`yield_index_label` contains `not detected`, or status is `No crop detected`), "
+        "then in section 4 add a prominent warning line exactly like:\n"
+        "> **Warning: Requested crop not detected in this bbox/date window.**\n"
+        "In that case, do not frame the result as biological stress, and explicitly mark "
+        "yield interpretation confidence as low due to crop absence.\n"
+        "In section 5, if crop report markdown is present, include at least two financial "
+        "signals from it (for example futures momentum, supply regime, FX, oil/input costs, "
+        "or demand structure) and reconcile them with market-overview stats.\n"
         "In section 7, include exactly one line: `Recommended Action: <action>` where "
         "<action> matches the provided action signal. Do not output chain-of-thought."
     )
@@ -1364,16 +1463,36 @@ def select_crop_from_yield_response(
     if preferred in crops and isinstance(crops[preferred], dict):
         return preferred, crops[preferred], "query_crop_match"
 
-    fallback_order = ["wheat", "maize", "grape", "other_cereal", "grassland", "other"]
-    for candidate in fallback_order:
-        if candidate in crops and isinstance(crops[candidate], dict):
-            return candidate, crops[candidate], f"fallback_to_{candidate}"
+    # Do not cross-fallback to a different crop group when the requested crop
+    # is absent in the backend payload for this bbox/date.
+    return preferred, {}, "requested_crop_not_detected"
 
-    for key, value in crops.items():
-        if isinstance(value, dict):
-            return key, value, "fallback_first_crop"
 
-    return "other", {}, "no_valid_crop_payload"
+def build_no_crop_detected_health(
+    selected_group: str,
+    date_range: str,
+) -> CropHealthData:
+    latest_scene_date = date_range.split("/")[-1] if "/" in date_range else date_range
+    return {
+        "ndvi": 0.6,
+        "leaf_area_index": 1.92,
+        "status": "No crop detected",
+        "selected_crop_group": selected_group,
+        "selected_crop_label": selected_group.replace("_", " ").title(),
+        "yield_index": 1.0,
+        "yield_index_label": "Requested crop not detected in bbox/date",
+        "predicted_yield_t_ha": 0.0,
+        "target_year": datetime.now().year,
+        "confidence": 0.1,
+        "anomaly_vs_5yr_pct": 0.0,
+        "estimated_yield_delta_pct": 0.0,
+        "satellite_history_signal": "stable",
+        "latest_scene_date": latest_scene_date,
+        "cloud_cover_pct": 0.0,
+        "cropland_coverage_pct": 0.0,
+        "segmented_area_ha": 0.0,
+        "source": f"{API_CONFIG.yield_analysis} (requested crop not detected)",
+    }
 
 
 def build_crop_health_from_yield_payload(
@@ -1442,6 +1561,27 @@ def yield_analysis_node(state: AgriState) -> Dict[str, Any]:
                 crop_type,
             )
             date_range = str(live_payload.get("date_range") or "")
+            if selection_reason == "requested_crop_not_detected":
+                crop_health = build_no_crop_detected_health(
+                    selected_group=selected_group,
+                    date_range=date_range,
+                )
+                message = f"{selected_group} not detected in this bbox/date window."
+                return {
+                    "crop_health_data": crop_health,
+                    "yield_analysis_data": {
+                        "endpoint": live_payload.get("endpoint"),
+                        "bbox": live_payload.get("bbox"),
+                        "date_range": date_range,
+                        "total_classified_pixels": live_payload.get("total_classified_pixels"),
+                        "selected_crop_group": selected_group,
+                        "selected_crop": {},
+                        "selection_reason": selection_reason,
+                        "summary": message,
+                    },
+                    "yield_analysis_debug": f"live_backend_yield_analysis:{selection_reason}",
+                    "yield_analysis_error": yield_error,
+                }
             crop_health = build_crop_health_from_yield_payload(
                 bbox=bbox,
                 selected_group=selected_group,
@@ -1570,6 +1710,106 @@ def market_overview_node(state: AgriState) -> Dict[str, Any]:
         },
         "market_overview_debug": "fallback_simulated_market_overview",
         "market_overview_error": market_error or "market_overview_fetch:not_available",
+    }
+
+
+def crop_report_node(state: AgriState) -> Dict[str, Any]:
+    crop_type = normalize_crop_type(state.get("crop_type", "wheat"))
+    report_crop = map_crop_type_to_report_crop(crop_type)
+    if report_crop is None:
+        return {
+            "crop_report_data": {
+                "crop": None,
+                "source": API_CONFIG.crop_report,
+                "summary": f"No dedicated crop report available for '{crop_type}'.",
+                "report_markdown": "",
+                "report_char_count": 0,
+                "truncated": False,
+            },
+            "crop_report_debug": "skipped_unsupported_crop_for_report",
+            "crop_report_error": "",
+        }
+
+    crop_report_error = ""
+    report_payload = None
+    try:
+        report_payload = API_ADAPTERS.search_crop_report(report_crop)
+    except Exception as exc:
+        crop_report_error = exception_to_error_code("crop_report_fetch", exc)
+
+    if isinstance(report_payload, dict):
+        report_text = str(report_payload.get("report") or "").strip()
+        if report_text:
+            max_chars = parse_env_int("CROP_REPORT_MAX_CHARS", 12000)
+            truncated = len(report_text) > max_chars
+            report_markdown = report_text[:max_chars] if truncated else report_text
+            summary = f"Loaded {report_crop} markdown financial report."
+            return {
+                "crop_report_data": {
+                    "endpoint": report_payload.get("endpoint"),
+                    "crop": report_payload.get("crop", report_crop),
+                    "format": report_payload.get("format", "markdown"),
+                    "source": API_CONFIG.crop_report,
+                    "summary": summary,
+                    "report_markdown": report_markdown,
+                    "report_char_count": len(report_text),
+                    "truncated": truncated,
+                },
+                "crop_report_debug": "live_backend_crop_report",
+                "crop_report_error": crop_report_error,
+            }
+
+    # Local fallback when backend endpoint is unavailable.
+    report_path = os.path.abspath(
+        os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "backend",
+            "data",
+            "reports",
+            f"{report_crop}_analysis.md",
+        )
+    )
+    if os.path.isfile(report_path):
+        try:
+            with open(report_path, "r", encoding="utf-8") as handle:
+                report_text = handle.read().strip()
+        except Exception as exc:
+            crop_report_error = (
+                crop_report_error
+                or exception_to_error_code("crop_report_local_read", exc)
+            )
+            report_text = ""
+        if report_text:
+            max_chars = parse_env_int("CROP_REPORT_MAX_CHARS", 12000)
+            truncated = len(report_text) > max_chars
+            report_markdown = report_text[:max_chars] if truncated else report_text
+            return {
+                "crop_report_data": {
+                    "endpoint": "/agent/crop-report (local fallback)",
+                    "crop": report_crop,
+                    "format": "markdown",
+                    "source": f"{API_CONFIG.crop_report} (local fallback)",
+                    "summary": f"Loaded local {report_crop} markdown financial report.",
+                    "report_markdown": report_markdown,
+                    "report_char_count": len(report_text),
+                    "truncated": truncated,
+                },
+                "crop_report_debug": "local_fallback_crop_report",
+                "crop_report_error": crop_report_error,
+            }
+
+    return {
+        "crop_report_data": {
+            "crop": report_crop,
+            "source": API_CONFIG.crop_report,
+            "summary": f"Crop report unavailable for {report_crop}.",
+            "report_markdown": "",
+            "report_char_count": 0,
+            "truncated": False,
+        },
+        "crop_report_debug": "crop_report_not_available",
+        "crop_report_error": crop_report_error or "crop_report_fetch:not_available",
     }
 
 
@@ -1812,6 +2052,7 @@ def build_graph():
     graph.add_node("geocode_dispatch", with_node_logging("geocode_dispatch", geocode_dispatch_node))
     graph.add_node("yield_analysis_agent", with_node_logging("yield_analysis_agent", yield_analysis_node))
     graph.add_node("market_overview_agent", with_node_logging("market_overview_agent", market_overview_node))
+    graph.add_node("crop_report_agent", with_node_logging("crop_report_agent", crop_report_node))
     graph.add_node("climate_agent", with_node_logging("climate_agent", climate_node))
     graph.add_node("bio_monitor", with_node_logging("bio_monitor", bio_monitor_node))
     graph.add_node("climate_priority", with_node_logging("climate_priority", climate_priority_node))
@@ -1838,9 +2079,11 @@ def build_graph():
     )
     graph.add_edge("geocode_dispatch", "yield_analysis_agent")
     graph.add_edge("geocode_dispatch", "market_overview_agent")
+    graph.add_edge("geocode_dispatch", "crop_report_agent")
     graph.add_edge("geocode_dispatch", "climate_agent")
     graph.add_edge("yield_analysis_agent", "bio_monitor")
     graph.add_edge("market_overview_agent", "bio_monitor")
+    graph.add_edge("crop_report_agent", "bio_monitor")
     graph.add_edge("climate_agent", "bio_monitor")
     graph.add_conditional_edges(
         "bio_monitor",
@@ -1884,7 +2127,7 @@ def print_architecture_summary() -> None:
     print("-----")
     print("START -> query_analysis_agent -> query_validation")
     print("query_validation -> geocoding_agent (validated) OR clarification_node -> END")
-    print("geocoding_agent -> [yield_analysis_agent || market_overview_agent || climate_agent] (if resolved) OR clarification_node -> END")
+    print("geocoding_agent -> [yield_analysis_agent || market_overview_agent || crop_report_agent || climate_agent] (if resolved) OR clarification_node -> END")
     print("bio_monitor -> emergency_dispatcher (if bio risk > 0.8) -> orchestrator")
     print("bio_monitor -> climate_priority (if critical stage) -> orchestrator")
     print("bio_monitor -> orchestrator (otherwise) -> END")
