@@ -20,7 +20,11 @@ function getYieldBadgeClass(index: number | null) {
 }
 
 export function CropAnalysisSection({ data, isLoading, error }: CropAnalysisSectionProps) {
-  const entries = data ? Object.entries(data.crops).sort((a, b) => (b[1].area_pct || 0) - (a[1].area_pct || 0)) : [];
+  const entries = data
+    ? Object.entries(data.crops)
+        .sort((a, b) => (b[1].area_pct || 0) - (a[1].area_pct || 0))
+        .slice(0, 3)
+    : [];
 
   return (
     <section className="mx-auto w-full max-w-[1400px] px-5 pb-7 md:px-7">
@@ -49,11 +53,12 @@ export function CropAnalysisSection({ data, isLoading, error }: CropAnalysisSect
               const yp = item.yield_prediction;
               const histValues = yp?.history ? Object.values(yp.history).join(' -> ') : '';
               const departments = yp?.departements?.join(', ') ?? '';
+              const title = group.replace('_', ' ');
 
               return (
                 <article key={group} className="panel-card p-4">
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    <h3 className="text-sm font-bold capitalize text-slate-800">{group.replace('_', ' ')}</h3>
+                    <h3 className="text-sm font-bold text-slate-800">{title}</h3>
                     <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
                       {item.area_pct}% area
                     </span>

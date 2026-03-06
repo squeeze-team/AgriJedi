@@ -1,26 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Header } from './components/Header';
 import { MapPanel } from './components/MapPanel';
-import { PredictionPanel } from './components/PredictionPanel';
 import { PriceChartPanel } from './components/PriceChartPanel';
 import { CropAnalysisSection } from './components/CropAnalysisSection';
 import { ChatBubble } from './components/ChatBubble';
+import type { CropLegendItem } from './components/CropLegend';
 import { SatelliteSection } from './components/SatelliteSection';
 import { WeatherChartPanel } from './components/WeatherChartPanel';
 import {
-  fetchCropAnalysis,
   fetchSatelliteLayerImage,
-  fetchPriceHistory,
-  fetchPricePrediction,
+  fetchAllPriceHistory,
+  fetchCropAnalysis,
   fetchWeather,
-  fetchYieldPrediction,
   type CropAnalysisResponse,
-  type Crop,
-  type PriceHistoryData,
-  type PricePrediction,
+  type MultiPriceHistoryData,
   type SatelliteLayer,
   type WeatherData,
-  type YieldPrediction,
 } from './services/api';
 
 interface SatelliteViewState {
@@ -28,10 +23,27 @@ interface SatelliteViewState {
   status: 'idle' | 'loading' | 'loaded' | 'error';
 }
 
-const satelliteLayers: SatelliteLayer[] = ['rgb', 'false_color', 'ndvi', 'overlay'];
+const satelliteLayers: Array<Exclude<SatelliteLayer, 'false_color'>> = ['rgb', 'ndvi', 'overlay'];
 
 const defaultBbox = '4.67,44.71,4.97,45.01';
 const defaultDate = '2025-06-01/2025-09-01';
+
+const groupLegendColor: Record<string, string> = {
+  maize: '#f4de7a',
+  wheat: '#d8b47f',
+  grape: '#e7a5c8',
+  grassland: '#9fd48a',
+  other_cereal: '#c9a25f',
+  other_fruit: '#bf88d8',
+  other: '#e7b58b',
+};
+
+function formatGroupLabel(group: string) {
+  return group
+    .split('_')
+    .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+    .join(' ');
+}
 
 function createInitialSatelliteViews(): Record<SatelliteLayer, SatelliteViewState> {
   return {
@@ -43,15 +55,8 @@ function createInitialSatelliteViews(): Record<SatelliteLayer, SatelliteViewStat
 }
 
 function App() {
-  const [crop, setCrop] = useState<Crop>('wheat');
-
   const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
-  const [priceData, setPriceData] = useState<PriceHistoryData | null>(null);
-
-  const [yieldResult, setYieldResult] = useState<YieldPrediction | null>(null);
-  const [priceResult, setPriceResult] = useState<PricePrediction | null>(null);
-  const [isYieldLoading, setIsYieldLoading] = useState(false);
-  const [isPriceLoading, setIsPriceLoading] = useState(false);
+  const [priceData, setPriceData] = useState<MultiPriceHistoryData | null>(null);
 
   const [bbox, setBbox] = useState(defaultBbox);
   const [satDate, setSatDate] = useState(defaultDate);
@@ -62,32 +67,31 @@ function App() {
   const [satelliteViews, setSatelliteViews] = useState<Record<SatelliteLayer, SatelliteViewState>>(
     createInitialSatelliteViews(),
   );
+  const dynamicLegendItems = useMemo<CropLegendItem[] | undefined>(() => {
+    if (!analysisData) {
+      return undefined;
+    }
+    const topThree = Object.entries(analysisData.crops)
+      .sort((a, b) => (b[1].area_pct || 0) - (a[1].area_pct || 0))
+      .slice(0, 3);
+
+    if (topThree.length === 0) {
+      return undefined;
+    }
+
+    return topThree.map(([group]) => ({
+      label: formatGroupLabel(group),
+      color: groupLegendColor[group] ?? '#94a3b8',
+    }));
+  }, [analysisData]);
 
   useEffect(() => {
     fetchWeather().then(setWeatherData);
   }, []);
 
   useEffect(() => {
-    setPriceData(null);
-    fetchPriceHistory(crop).then(setPriceData);
-  }, [crop]);
-
-  async function runPredictions() {
-    setIsYieldLoading(true);
-    setIsPriceLoading(true);
-    setYieldResult(null);
-    setPriceResult(null);
-
-    const [yieldPrediction, pricePrediction] = await Promise.all([
-      fetchYieldPrediction(crop),
-      fetchPricePrediction(crop),
-    ]);
-
-    setYieldResult(yieldPrediction);
-    setPriceResult(pricePrediction);
-    setIsYieldLoading(false);
-    setIsPriceLoading(false);
-  }
+    fetchAllPriceHistory().then(setPriceData);
+  }, []);
 
   async function loadSatelliteViewsBy(nextBbox: string, nextDate: string) {
     setBbox(nextBbox);
@@ -161,18 +165,12 @@ function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800">
-      <Header crop={crop} onCropChange={setCrop} onRunPrediction={runPredictions} />
+      <Header />
 
       <main className="mx-auto grid w-full max-w-[1400px] grid-cols-1 gap-4 px-5 py-5 md:px-7 lg:grid-cols-2">
-        <MapPanel bbox={mapBbox} />
+        <MapPanel bbox={mapBbox} legendItems={dynamicLegendItems} />
         <WeatherChartPanel data={weatherData} />
-        <PriceChartPanel crop={crop} data={priceData} />
-        <PredictionPanel
-          yieldResult={yieldResult}
-          priceResult={priceResult}
-          isYieldLoading={isYieldLoading}
-          isPriceLoading={isPriceLoading}
-        />
+        <PriceChartPanel data={priceData} />
       </main>
 
       <SatelliteSection
@@ -184,6 +182,7 @@ function App() {
         onLoad={loadSatelliteViews}
         onImageLoad={(layer) => setLayerStatus(layer, 'loaded')}
         onImageError={(layer) => setLayerStatus(layer, 'error')}
+        legendItems={dynamicLegendItems}
       />
 
       <CropAnalysisSection data={analysisData} isLoading={analysisLoading} error={analysisError} />

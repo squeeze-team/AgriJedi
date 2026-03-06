@@ -17,6 +17,13 @@ export interface PriceHistoryData {
   isDemo?: boolean;
 }
 
+export interface MultiPriceHistoryData {
+  months: string[];
+  unit: string;
+  series: Record<Crop, number[]>;
+  isDemo?: boolean;
+}
+
 export interface YieldPrediction {
   crop: Crop;
   country: string;
@@ -141,6 +148,44 @@ export async function fetchPriceHistory(crop: Crop): Promise<PriceHistoryData> {
       isDemo: true,
     };
   }
+}
+
+export async function fetchAllPriceHistory(): Promise<MultiPriceHistoryData> {
+  const crops: Crop[] = ['wheat', 'maize', 'grape'];
+  const results = await Promise.all(crops.map((crop) => fetchPriceHistory(crop)));
+
+  const monthSet = new Set<string>();
+  results.forEach((result) => {
+    result.months.forEach((month) => monthSet.add(month));
+  });
+  const months = Array.from(monthSet).sort();
+
+  const series = {} as Record<Crop, number[]>;
+  crops.forEach((crop, index) => {
+    const result = results[index];
+    const priceByMonth = new Map<string, number>();
+    result.months.forEach((month, i) => {
+      priceByMonth.set(month, result.prices[i]);
+    });
+    series[crop] = months.map((month) => {
+      const direct = priceByMonth.get(month);
+      if (direct != null) {
+        return direct;
+      }
+      const prev = [...priceByMonth.entries()]
+        .filter(([m]) => m < month)
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .at(-1)?.[1];
+      return prev ?? NaN;
+    });
+  });
+
+  return {
+    months,
+    unit: results[0]?.unit ?? 'USD/mt',
+    isDemo: results.some((result) => result.isDemo),
+    series,
+  };
 }
 
 export async function fetchYieldPrediction(crop: Crop): Promise<YieldPrediction> {

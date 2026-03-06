@@ -171,6 +171,9 @@ def _load_band(
         if out_h and out_w:
             read_kwargs["out_shape"] = (1, out_h, out_w)
             read_kwargs["resampling"] = Resampling.bilinear
+            # Preserve requested window footprint even when bbox touches tile edge.
+            read_kwargs["boundless"] = True
+            read_kwargs["fill_value"] = np.nan
         data = src.read(1, **read_kwargs).astype(np.float32)
         transform = src.window_transform(window)
     return data, transform
@@ -208,7 +211,7 @@ def _normalize(band: np.ndarray, percentile: int = 98) -> np.ndarray:
 
 # ─── Public API ──────────────────────────────────────────────────
 def search_items(bbox: list[float], date_range: str, max_items: int = 5):
-    """Return a list of Sentinel-2 STAC items sorted by cloud cover."""
+    """Return STAC items sorted by bbox coverage first, then cloud cover."""
     catalog = _get_catalog()
     search = catalog.search(
         collections=[S2_COLLECTION],
@@ -217,7 +220,38 @@ def search_items(bbox: list[float], date_range: str, max_items: int = 5):
         query={"eo:cloud_cover": {"lt": S2_MAX_CLOUD_COVER}},
         max_items=max_items,
     )
-    return sorted(search.items(), key=lambda i: i.properties["eo:cloud_cover"])
+    items = list(search.items())
+
+    def _bbox_intersection_ratio(query_bbox: list[float], item_bbox: list[float] | None) -> float:
+        if not item_bbox or len(item_bbox) != 4:
+            return 0.0
+        q_w, q_s, q_e, q_n = query_bbox
+        i_w, i_s, i_e, i_n = item_bbox
+        inter_w = max(q_w, i_w)
+        inter_s = max(q_s, i_s)
+        inter_e = min(q_e, i_e)
+        inter_n = min(q_n, i_n)
+        if inter_e <= inter_w or inter_n <= inter_s:
+            return 0.0
+        inter_area = (inter_e - inter_w) * (inter_n - inter_s)
+        query_area = max((q_e - q_w) * (q_n - q_s), 1e-12)
+        return float(inter_area / query_area)
+
+    scored = [
+        (
+            _bbox_intersection_ratio(bbox, getattr(item, "bbox", None)),
+            float(item.properties.get("eo:cloud_cover", 100)),
+            item,
+        )
+        for item in items
+    ]
+    scored.sort(key=lambda s: (-s[0], s[1]))
+
+    # Avoid extreme stretching: drop items that barely intersect the query bbox.
+    filtered = [item for ratio, _cloud, item in scored if ratio >= 0.35]
+    if filtered:
+        return filtered
+    return [item for _ratio, _cloud, item in scored]
 
 
 def get_ndvi_stats(

@@ -1,4 +1,5 @@
 import type { SatelliteLayer } from '../services/api';
+import { CropLegend, type CropLegendItem } from './CropLegend';
 
 interface SatelliteViewState {
   src: string | null;
@@ -14,6 +15,7 @@ interface SatelliteSectionProps {
   onLoad: () => void;
   onImageLoad: (layer: SatelliteLayer) => void;
   onImageError: (layer: SatelliteLayer) => void;
+  legendItems?: CropLegendItem[];
 }
 
 const presets = [
@@ -24,10 +26,9 @@ const presets = [
 ] as const;
 
 const panels: Array<{ layer: SatelliteLayer; title: string; emptyText: string }> = [
-  { layer: 'rgb', title: 'True Color (RGB)', emptyText: 'Select a region and click Load.' },
-  { layer: 'false_color', title: 'False Color (NIR-R-G)', emptyText: '-' },
-  { layer: 'ndvi', title: 'NDVI - Vegetation Health', emptyText: '-' },
-  { layer: 'overlay', title: 'RGB + CLMS Crop Types Overlay', emptyText: '-' },
+  { layer: 'rgb', title: 'Natural Color Satellite View', emptyText: 'Select a region and click Load.' },
+  { layer: 'ndvi', title: 'Vegetation Health Map (NDVI)', emptyText: '-' },
+  { layer: 'overlay', title: 'Crop Type Overlay Map', emptyText: '-' },
 ];
 
 export function SatelliteSection({
@@ -39,6 +40,7 @@ export function SatelliteSection({
   onLoad,
   onImageLoad,
   onImageError,
+  legendItems,
 }: SatelliteSectionProps) {
   return (
     <section className="mx-auto w-full max-w-[1400px] px-5 pb-7 md:px-7">
@@ -90,7 +92,7 @@ export function SatelliteSection({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {panels.map((panel) => {
           const view = views[panel.layer];
           const placeholderText =
@@ -115,6 +117,9 @@ export function SatelliteSection({
                     onLoad={() => onImageLoad(panel.layer)}
                     onError={() => onImageError(panel.layer)}
                   />
+                )}
+                {panel.layer === 'overlay' && (
+                  <CropLegend className="pointer-events-none absolute bottom-3 right-3 z-20" items={legendItems} />
                 )}
               </div>
             </article>

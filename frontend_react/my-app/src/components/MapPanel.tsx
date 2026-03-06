@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { MapContainer, Rectangle, TileLayer, WMSTileLayer, useMap } from 'react-leaflet';
+import { CropLegend, type CropLegendItem } from './CropLegend';
 
 const CLMS_WMS_URL = 'https://geoserver.vlcc.geoville.com/geoserver/ows';
 const CLMS_LAYER = 'HRL_CPL:CTY_S2021';
@@ -8,6 +9,7 @@ type Bounds = [[number, number], [number, number]];
 
 interface MapPanelProps {
   bbox: string;
+  legendItems?: CropLegendItem[];
 }
 
 function parseBboxToBounds(bbox: string): Bounds | null {
@@ -49,7 +51,7 @@ function AutoFitBounds({ bounds }: { bounds: Bounds | null }) {
   return null;
 }
 
-export function MapPanel({ bbox }: MapPanelProps) {
+export function MapPanel({ bbox, legendItems }: MapPanelProps) {
   const bounds = parseBboxToBounds(bbox);
 
   return (
@@ -83,23 +85,7 @@ export function MapPanel({ bbox }: MapPanelProps) {
           )}
         </MapContainer>
 
-        <div className="map-legend absolute bottom-4 right-3 z-[500] w-[170px] rounded-lg bg-white/90 p-2 shadow-md">
-          <h4 className="mb-1 text-xs font-semibold text-slate-700">Crop Types 2021</h4>
-          <ul className="space-y-1 text-xs text-slate-700">
-            <li className="flex items-center gap-2">
-              <span className="inline-block h-3 w-3 rounded-[2px] bg-[#f4de7a]" />
-              Maize
-            </li>
-            <li className="flex items-center gap-2">
-              <span className="inline-block h-3 w-3 rounded-[2px] bg-[#d8b47f]" />
-              Wheat
-            </li>
-            <li className="flex items-center gap-2">
-              <span className="inline-block h-3 w-3 rounded-[2px] bg-[#e7a5c8]" />
-              Grapes
-            </li>
-          </ul>
-        </div>
+        <CropLegend className="map-legend absolute bottom-4 right-3 z-[500]" items={legendItems} />
       </div>
     </section>
   );
