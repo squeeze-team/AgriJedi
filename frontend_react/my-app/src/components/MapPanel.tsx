@@ -37,7 +37,8 @@ function AutoFitBounds({ bounds }: { bounds: Bounds | null }) {
         paddingBottomRight: [horizontalPadding, verticalPadding],
         animate: true,
         duration: 0.45,
-        maxZoom: 18,
+        // Keep zoom in a range where CLMS crop tiles remain readable/visible.
+        maxZoom: 14,
       });
     };
 
@@ -67,7 +68,7 @@ export function MapPanel({ bbox }: MapPanelProps) {
             format="image/png"
             transparent
             version="1.3.0"
-            opacity={0.55}
+            opacity={0.72}
           />
           {bounds && (
             <Rectangle

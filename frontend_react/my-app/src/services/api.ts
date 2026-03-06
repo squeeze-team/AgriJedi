@@ -82,6 +82,14 @@ export function getCropLabel(crop: Crop) {
   return capitalize(crop);
 }
 
+function parseBboxString(bbox: string): [number, number, number, number] {
+  const values = bbox.split(',').map((v) => Number(v.trim()));
+  if (values.length !== 4 || values.some((v) => Number.isNaN(v))) {
+    throw new Error('Invalid bbox format');
+  }
+  return [values[0], values[1], values[2], values[3]];
+}
+
 function getLast24MonthRange() {
   const now = new Date();
   const end = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
@@ -94,7 +102,11 @@ function getLast24MonthRange() {
 export async function fetchWeather(): Promise<WeatherData> {
   const { start, end } = getLast24MonthRange();
   try {
-    const response = await fetch(`${API_BASE}/weather/france?start=${start}&end=${end}`);
+    const response = await fetch(`${API_BASE}/weather/france`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ start, end }),
+    });
     const data = (await response.json()) as Partial<WeatherData>;
     if (data.months && data.months.length > 0 && data.PRECTOTCORR && data.T2M) {
       return data as WeatherData;
@@ -107,7 +119,11 @@ export async function fetchWeather(): Promise<WeatherData> {
 
 export async function fetchPriceHistory(crop: Crop): Promise<PriceHistoryData> {
   try {
-    const response = await fetch(`${API_BASE}/prices/history?crop=${crop}`);
+    const response = await fetch(`${API_BASE}/prices/history`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ crop }),
+    });
     const data = (await response.json()) as { dates?: string[]; prices?: number[]; unit?: string };
     if (data.dates && data.dates.length > 0 && data.prices) {
       return {
@@ -129,7 +145,11 @@ export async function fetchPriceHistory(crop: Crop): Promise<PriceHistoryData> {
 
 export async function fetchYieldPrediction(crop: Crop): Promise<YieldPrediction> {
   try {
-    const response = await fetch(`${API_BASE}/predict/yield?crop=${crop}&country=France`);
+    const response = await fetch(`${API_BASE}/predict/yield`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ crop, country: 'France' }),
+    });
     return (await response.json()) as YieldPrediction;
   } catch {
     return demoYieldPrediction(crop);
@@ -138,7 +158,11 @@ export async function fetchYieldPrediction(crop: Crop): Promise<YieldPrediction>
 
 export async function fetchPricePrediction(crop: Crop): Promise<PricePrediction> {
   try {
-    const response = await fetch(`${API_BASE}/predict/price?crop=${crop}`);
+    const response = await fetch(`${API_BASE}/predict/price`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ crop }),
+    });
     return (await response.json()) as PricePrediction;
   } catch {
     return demoPricePrediction(crop);
@@ -146,17 +170,42 @@ export async function fetchPricePrediction(crop: Crop): Promise<PricePrediction>
 }
 
 export async function fetchCropAnalysis(bbox: string, date: string): Promise<CropAnalysisResponse> {
-  const response = await fetch(
-    `${API_BASE}/analysis/crop-ndvi?bbox=${encodeURIComponent(bbox)}&date=${encodeURIComponent(date)}&resolution=400`,
-  );
+  const response = await fetch(`${API_BASE}/analysis/crop-ndvi`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      bbox: parseBboxString(bbox),
+      date,
+      resolution: 400,
+    }),
+  });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
   return (await response.json()) as CropAnalysisResponse;
 }
 
-export function buildSatelliteUrl(bbox: string, date: string, layer: SatelliteLayer) {
-  return `${API_BASE}/satellite/view?bbox=${encodeURIComponent(bbox)}&date=${encodeURIComponent(date)}&layer=${layer}&width=600&height=600`;
+export async function fetchSatelliteLayerImage(
+  bbox: string,
+  date: string,
+  layer: SatelliteLayer,
+): Promise<string> {
+  const response = await fetch(`${API_BASE}/satellite/view`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      bbox: parseBboxString(bbox),
+      date,
+      layer,
+      width: 600,
+      height: 600,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
 }
 
 function demoWeatherData(): WeatherData {

@@ -7,15 +7,17 @@ Uses pystac-client + planetary-computer for signed access to cloud-optimised Geo
 from __future__ import annotations
 
 import io
-from typing import List
+import threading
+from collections import OrderedDict
+from typing import Any
 
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")  # headless backend
-import matplotlib.pyplot as plt
 from pystac_client import Client
 import planetary_computer
 import rasterio
+from rasterio.enums import Resampling
 from rasterio.windows import from_bounds
 from rasterio.warp import transform_bounds
 from PIL import Image
@@ -114,16 +116,86 @@ def _get_catalog():
     return _catalog
 
 
+# ─── In-memory caches (thread-safe) ──────────────────────────────
+_cache_lock = threading.Lock()
+_stac_search_cache: OrderedDict[tuple, list] = OrderedDict()
+_band_cache: OrderedDict[tuple, tuple[np.ndarray, Any]] = OrderedDict()
+_visual_cache: OrderedDict[tuple, tuple[bytes, dict]] = OrderedDict()
+
+_MAX_STAC_CACHE = 32
+_MAX_BAND_CACHE = 96
+_MAX_VISUAL_CACHE = 64
+
+
+def _bbox_key(bbox: list[float]) -> tuple[float, float, float, float]:
+    return tuple(round(float(v), 6) for v in bbox)  # stable key for tiny float diffs
+
+
+def _trim_lru(cache: OrderedDict, max_items: int):
+    while len(cache) > max_items:
+        cache.popitem(last=False)
+
+
+def _get_visual_cache(key: tuple) -> tuple[io.BytesIO, dict] | None:
+    with _cache_lock:
+        cached = _visual_cache.get(key)
+        if cached is None:
+            return None
+        _visual_cache.move_to_end(key)
+        png_bytes, meta = cached
+    return io.BytesIO(png_bytes), dict(meta)
+
+
+def _set_visual_cache(key: tuple, png_buffer: io.BytesIO, meta: dict):
+    payload = png_buffer.getvalue()
+    with _cache_lock:
+        _visual_cache[key] = (payload, dict(meta))
+        _visual_cache.move_to_end(key)
+        _trim_lru(_visual_cache, _MAX_VISUAL_CACHE)
+
+
 # ─── Band loading helpers ────────────────────────────────────────
-def _load_band(item, band_name: str, bbox: list[float]) -> tuple[np.ndarray, any]:
+def _load_band(
+    item,
+    band_name: str,
+    bbox: list[float],
+    out_h: int | None = None,
+    out_w: int | None = None,
+) -> tuple[np.ndarray, Any]:
     """Read a single band cropped to *bbox* from a COG asset."""
     href = item.assets[band_name].href
     with rasterio.open(href) as src:
         projected_bbox = transform_bounds("EPSG:4326", src.crs, *bbox)
         window = from_bounds(*projected_bbox, src.transform)
-        data = src.read(1, window=window).astype(np.float32)
+        read_kwargs: dict[str, Any] = {"window": window}
+        if out_h and out_w:
+            read_kwargs["out_shape"] = (1, out_h, out_w)
+            read_kwargs["resampling"] = Resampling.bilinear
+        data = src.read(1, **read_kwargs).astype(np.float32)
         transform = src.window_transform(window)
     return data, transform
+
+
+def _load_band_cached(
+    item,
+    band_name: str,
+    bbox: list[float],
+    out_h: int | None = None,
+    out_w: int | None = None,
+) -> tuple[np.ndarray, Any]:
+    key = (item.id, band_name, _bbox_key(bbox), out_h, out_w)
+    with _cache_lock:
+        cached = _band_cache.get(key)
+        if cached is not None:
+            _band_cache.move_to_end(key)
+            return cached
+
+    band = _load_band(item, band_name, bbox, out_h=out_h, out_w=out_w)
+    with _cache_lock:
+        _band_cache[key] = band
+        _band_cache.move_to_end(key)
+        _trim_lru(_band_cache, _MAX_BAND_CACHE)
+    return band
 
 
 def _normalize(band: np.ndarray, percentile: int = 98) -> np.ndarray:
@@ -162,7 +234,7 @@ def get_ndvi_stats(
     """
     bbox = bbox or FRANCE_BBOX
     try:
-        items = search_items(bbox, date_range)
+        items = _search_items_cached(bbox, date_range)
     except Exception as exc:
         print(f"[s2_pc] Sentinel-2 search failed: {exc}")
         items = []
@@ -171,8 +243,8 @@ def get_ndvi_stats(
         return _get_bundled_ndvi(crop=crop, date_range=date_range)
 
     item = items[0]
-    red, _ = _load_band(item, "B04", bbox)
-    nir, _ = _load_band(item, "B08", bbox)
+    red, _ = _load_band_cached(item, "B04", bbox)
+    nir, _ = _load_band_cached(item, "B08", bbox)
     ndvi = (nir - red) / (nir + red + 1e-6)
 
     valid = ndvi[np.isfinite(ndvi)]
@@ -193,64 +265,67 @@ def get_s2_overlay_png(
     date_range: str,
     width: int = 512,
     height: int = 512,
+    item: Any | None = None,
 ) -> io.BytesIO:
     """
     Build a composite PNG (Sentinel-2 RGB + CLMS crop type overlay)
     and return it as an in-memory bytes buffer.
     """
-    items = search_items(bbox, date_range)
-    if not items:
-        # Return a blank placeholder
-        buf = io.BytesIO()
-        img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        img.save(buf, format="PNG")
-        buf.seek(0)
-        return buf
+    if item is None:
+        items = _search_items_cached(bbox, date_range)
+        if not items:
+            # Return a blank placeholder
+            buf = io.BytesIO()
+            img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            img.save(buf, format="PNG")
+            buf.seek(0)
+            return buf
+        item = items[0]
 
-    item = items[0]
-    red, _ = _load_band(item, "B04", bbox)
-    green, _ = _load_band(item, "B03", bbox)
-    blue, _ = _load_band(item, "B02", bbox)
+    red, _ = _load_band_cached(item, "B04", bbox, out_h=height, out_w=width)
+    green, _ = _load_band_cached(item, "B03", bbox, out_h=height, out_w=width)
+    blue, _ = _load_band_cached(item, "B02", bbox, out_h=height, out_w=width)
 
     rgb = np.stack([_normalize(red), _normalize(green), _normalize(blue)], axis=-1)
 
     # Fetch aligned CLMS WMS overlay
     clms_rgba = get_crop_type_overlay(
-        bbox=bbox, width=red.shape[1], height=red.shape[0]
+        bbox=bbox, width=width, height=height
     )
-
-    # Composite via matplotlib
-    fig, ax = plt.subplots(figsize=(width / 100, height / 100), dpi=100)
-    ax.imshow(rgb, extent=bbox, aspect="auto")
+    rgb_img = Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8), mode="RGB").convert("RGBA")
     if clms_rgba is not None:
-        ax.imshow(clms_rgba, extent=bbox, aspect="auto", alpha=0.45)
-    ax.axis("off")
-    fig.tight_layout(pad=0)
+        clms_uint8 = (np.clip(clms_rgba, 0, 1) * 255).astype(np.uint8)
+        # Keep CLMS alpha from WMS but soften overlay strength.
+        clms_uint8[:, :, 3] = (clms_uint8[:, :, 3].astype(np.float32) * 0.45).astype(np.uint8)
+        overlay_img = Image.fromarray(clms_uint8, mode="RGBA")
+        if overlay_img.size != rgb_img.size:
+            overlay_img = overlay_img.resize(rgb_img.size, Image.LANCZOS)
+        rgb_img.alpha_composite(overlay_img)
+
+    if rgb_img.size != (width, height):
+        rgb_img = rgb_img.resize((width, height), Image.LANCZOS)
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0)
-    plt.close(fig)
+    rgb_img.convert("RGB").save(buf, format="PNG")
     buf.seek(0)
     return buf
 
 
 # ─── Satellite visualisation panel (multi-layer) ─────────────────
-
-# Simple in-memory cache so 4 parallel /satellite/view requests
-# reuse the same STAC search result instead of querying 4 times.
-_stac_search_cache: dict = {}
-
-
 def _search_items_cached(
     bbox: list[float], date_range: str, max_items: int = 5
 ) -> list:
-    key = (tuple(bbox), date_range, max_items)
-    if key in _stac_search_cache:
-        return _stac_search_cache[key]
-    if len(_stac_search_cache) > 20:
-        _stac_search_cache.clear()
+    key = (_bbox_key(bbox), date_range, max_items)
+    with _cache_lock:
+        cached = _stac_search_cache.get(key)
+        if cached is not None:
+            _stac_search_cache.move_to_end(key)
+            return cached
     items = search_items(bbox, date_range, max_items)
-    _stac_search_cache[key] = items
+    with _cache_lock:
+        _stac_search_cache[key] = items
+        _stac_search_cache.move_to_end(key)
+        _trim_lru(_stac_search_cache, _MAX_STAC_CACHE)
     return items
 
 
@@ -271,19 +346,16 @@ def _array_to_png(
 def _ndvi_to_png(
     arr_2d: np.ndarray, target_w: int, target_h: int
 ) -> io.BytesIO:
-    """Render a 2-D NDVI array with RdYlGn colormap to PNG buffer."""
-    fig, ax = plt.subplots(
-        figsize=(target_w / 100, target_h / 100), dpi=100
-    )
-    im = ax.imshow(
-        arr_2d, cmap="RdYlGn", vmin=-0.2, vmax=0.9, aspect="auto"
-    )
-    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="NDVI")
-    ax.axis("off")
-    fig.tight_layout(pad=0.2)
+    """Render NDVI to RGB PNG using colormap only (no matplotlib figure/colorbar)."""
+    arr = np.asarray(arr_2d, dtype=np.float32)
+    arr = np.nan_to_num(arr, nan=-0.2, posinf=0.9, neginf=-0.2)
+    norm = np.clip((arr - (-0.2)) / (0.9 - (-0.2)), 0, 1)
+    rgb = (matplotlib.colormaps["RdYlGn"](norm)[..., :3] * 255).astype(np.uint8)
+    img = Image.fromarray(rgb, mode="RGB")
+    if img.size != (target_w, target_h):
+        img = img.resize((target_w, target_h), Image.LANCZOS)
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.1)
-    plt.close(fig)
+    img.save(buf, format="PNG")
     buf.seek(0)
     return buf
 
@@ -291,20 +363,11 @@ def _ndvi_to_png(
 def _placeholder_png(
     width: int, height: int, text: str = "No data"
 ) -> io.BytesIO:
-    """Return a simple grey placeholder PNG with centred text."""
-    fig, ax = plt.subplots(figsize=(width / 100, height / 100), dpi=100)
-    ax.text(
-        0.5, 0.5, text,
-        ha="center", va="center", fontsize=12,
-        color="#666", transform=ax.transAxes,
-    )
-    ax.set_facecolor("#f0f0f0")
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
-    ax.axis("off")
+    """Return a simple grey placeholder PNG."""
+    del text
+    img = Image.new("RGB", (width, height), (240, 240, 240))
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0)
-    plt.close(fig)
+    img.save(buf, format="PNG")
     buf.seek(0)
     return buf
 
@@ -330,6 +393,13 @@ def get_satellite_visualization(
     -------
     (png_buffer, metadata_dict)
     """
+    cache_key = (_bbox_key(bbox), date_range, vis_type, width, height)
+    cached = _get_visual_cache(cache_key)
+    if cached is not None:
+        cached_buf, cached_meta = cached
+        cached_meta["render_cache"] = "hit"
+        return cached_buf, cached_meta
+
     meta: dict = {"item_id": None, "date": None, "cloud_cover": None}
 
     try:
@@ -346,38 +416,46 @@ def get_satellite_visualization(
         "item_id": item.id,
         "date": item.datetime.isoformat() if item.datetime else None,
         "cloud_cover": item.properties.get("eo:cloud_cover"),
+        "render_cache": "miss",
     }
 
     try:
         if vis_type == "rgb":
-            red, _ = _load_band(item, "B04", bbox)
-            green, _ = _load_band(item, "B03", bbox)
-            blue, _ = _load_band(item, "B02", bbox)
+            red, _ = _load_band_cached(item, "B04", bbox, out_h=height, out_w=width)
+            green, _ = _load_band_cached(item, "B03", bbox, out_h=height, out_w=width)
+            blue, _ = _load_band_cached(item, "B02", bbox, out_h=height, out_w=width)
             rgb = np.stack(
                 [_normalize(red), _normalize(green), _normalize(blue)],
                 axis=-1,
             )
-            return _array_to_png(rgb, width, height), meta
+            out = _array_to_png(rgb, width, height)
+            _set_visual_cache(cache_key, out, meta)
+            return out, meta
 
         elif vis_type == "false_color":
-            nir, _ = _load_band(item, "B08", bbox)
-            red, _ = _load_band(item, "B04", bbox)
-            green, _ = _load_band(item, "B03", bbox)
+            nir, _ = _load_band_cached(item, "B08", bbox, out_h=height, out_w=width)
+            red, _ = _load_band_cached(item, "B04", bbox, out_h=height, out_w=width)
+            green, _ = _load_band_cached(item, "B03", bbox, out_h=height, out_w=width)
             fc = np.stack(
                 [_normalize(nir), _normalize(red), _normalize(green)],
                 axis=-1,
             )
-            return _array_to_png(fc, width, height), meta
+            out = _array_to_png(fc, width, height)
+            _set_visual_cache(cache_key, out, meta)
+            return out, meta
 
         elif vis_type == "ndvi":
-            red, _ = _load_band(item, "B04", bbox)
-            nir, _ = _load_band(item, "B08", bbox)
+            red, _ = _load_band_cached(item, "B04", bbox, out_h=height, out_w=width)
+            nir, _ = _load_band_cached(item, "B08", bbox, out_h=height, out_w=width)
             ndvi = (nir - red) / (nir + red + 1e-6)
-            return _ndvi_to_png(ndvi, width, height), meta
+            out = _ndvi_to_png(ndvi, width, height)
+            _set_visual_cache(cache_key, out, meta)
+            return out, meta
 
         elif vis_type == "overlay":
-            buf = get_s2_overlay_png(bbox, date_range, width, height)
-            return buf, meta
+            out = get_s2_overlay_png(bbox, date_range, width, height, item=item)
+            _set_visual_cache(cache_key, out, meta)
+            return out, meta
 
         else:
             return _placeholder_png(width, height, f"Unknown: {vis_type}"), meta

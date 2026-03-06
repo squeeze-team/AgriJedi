@@ -8,8 +8,8 @@ import { ChatBubble } from './components/ChatBubble';
 import { SatelliteSection } from './components/SatelliteSection';
 import { WeatherChartPanel } from './components/WeatherChartPanel';
 import {
-  buildSatelliteUrl,
   fetchCropAnalysis,
+  fetchSatelliteLayerImage,
   fetchPriceHistory,
   fetchPricePrediction,
   fetchWeather,
@@ -97,10 +97,7 @@ function App() {
     setSatelliteViews((previous) => {
       const next = { ...previous };
       satelliteLayers.forEach((layer) => {
-        next[layer] = {
-          src: buildSatelliteUrl(nextBbox, nextDate, layer),
-          status: 'loading',
-        };
+        next[layer] = { ...previous[layer], status: 'loading' };
       });
       return next;
     });
@@ -117,6 +114,35 @@ function App() {
     } finally {
       setAnalysisLoading(false);
     }
+
+    await Promise.all(
+      satelliteLayers.map(async (layer) => {
+        try {
+          const objectUrl = await fetchSatelliteLayerImage(nextBbox, nextDate, layer);
+          setSatelliteViews((previous) => {
+            const prevSrc = previous[layer].src;
+            if (prevSrc && prevSrc.startsWith('blob:')) {
+              URL.revokeObjectURL(prevSrc);
+            }
+            return {
+              ...previous,
+              [layer]: {
+                src: objectUrl,
+                status: 'loading',
+              },
+            };
+          });
+        } catch {
+          setSatelliteViews((previous) => ({
+            ...previous,
+            [layer]: {
+              ...previous[layer],
+              status: 'error',
+            },
+          }));
+        }
+      }),
+    );
   }
 
   async function loadSatelliteViews() {
