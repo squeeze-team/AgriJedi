@@ -13,7 +13,7 @@
     "@chatscope/chat-ui-kit-react": "^2.1.1",
     "@chatscope/chat-ui-kit-styles": "^1.4.0",
     "@tailwindcss/vite": "^4.2.1",
-    "chart.js": "^4.5.1",
+    "d3": "^7.9.0",
     "leaflet": "^1.9.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
@@ -24,6 +24,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@types/d3": "^7.4.3",
     "@types/leaflet": "^1.9.21",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.7",
