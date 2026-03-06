@@ -17,6 +17,9 @@ Reference legend (HRL CPL, 10 m):
 from __future__ import annotations
 
 import io
+import copy
+import threading
+from collections import OrderedDict
 from typing import Any
 
 import numpy as np
@@ -90,6 +93,36 @@ REPORTABLE_GROUPS = {"wheat", "maize", "grape", "other_cereal", "grassland", "ot
 
 # Colour-distance tolerance (Euclidean in 0-255 RGB space)
 _COLOUR_TOLERANCE = 40.0
+
+# Cache full analysis results to avoid recomputing identical bbox/date/resolution
+_analysis_cache_lock = threading.Lock()
+_analysis_cache: OrderedDict[tuple, dict[str, Any]] = OrderedDict()
+_MAX_ANALYSIS_CACHE = 24
+
+
+def _analysis_key(bbox: list[float], date_range: str, resolution: int) -> tuple:
+    return (
+        tuple(round(float(v), 6) for v in bbox),
+        date_range,
+        int(resolution),
+    )
+
+
+def _analysis_cache_get(key: tuple) -> dict[str, Any] | None:
+    with _analysis_cache_lock:
+        cached = _analysis_cache.get(key)
+        if cached is None:
+            return None
+        _analysis_cache.move_to_end(key)
+        return copy.deepcopy(cached)
+
+
+def _analysis_cache_set(key: tuple, value: dict[str, Any]):
+    with _analysis_cache_lock:
+        _analysis_cache[key] = copy.deepcopy(value)
+        _analysis_cache.move_to_end(key)
+        while len(_analysis_cache) > _MAX_ANALYSIS_CACHE:
+            _analysis_cache.popitem(last=False)
 
 
 # ─── Colour → class classification ───────────────────────────────
@@ -175,10 +208,10 @@ def _compute_ndvi_matrix(
     Resizes to (target_h, target_w) to match the CLMS grid.
     Returns None on failure.
     """
-    from services.s2_pc import search_items, _load_band
+    from services.s2_pc import _search_items_cached, _load_band_cached
 
     try:
-        items = search_items(bbox, date_range)
+        items = _search_items_cached(bbox, date_range)
     except Exception as exc:
         print(f"[crop_ndvi] S2 search failed: {exc}")
         return None
@@ -188,20 +221,13 @@ def _compute_ndvi_matrix(
 
     item = items[0]
     try:
-        red, _ = _load_band(item, "B04", bbox)
-        nir, _ = _load_band(item, "B08", bbox)
+        red, _ = _load_band_cached(item, "B04", bbox, out_h=target_h, out_w=target_w)
+        nir, _ = _load_band_cached(item, "B08", bbox, out_h=target_h, out_w=target_w)
     except Exception as exc:
         print(f"[crop_ndvi] Band load failed: {exc}")
         return None
 
     ndvi = (nir - red) / (nir + red + 1e-6)
-
-    # Resize to match CLMS grid dimensions
-    if ndvi.shape != (target_h, target_w):
-        from PIL import Image as _Img
-        ndvi_img = _Img.fromarray(ndvi.astype(np.float32))
-        ndvi_img = ndvi_img.resize((target_w, target_h), _Img.LANCZOS)
-        ndvi = np.array(ndvi_img, dtype=np.float32)
 
     return ndvi
 
@@ -586,6 +612,11 @@ def analyze_crop_ndvi(
     -------
     JSON-friendly dict with per-crop NDVI stats and yield proxy.
     """
+    cache_key = _analysis_key(bbox, date_range, resolution)
+    cached = _analysis_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     bbox_key = ",".join(f"{v}" for v in bbox)
 
     # ── Try live data ────────────────────────────────────────────
@@ -594,11 +625,15 @@ def analyze_crop_ndvi(
         if clms_rgb is not None:
             ndvi = _compute_ndvi_matrix(bbox, date_range, resolution, resolution)
             if ndvi is not None:
-                return _build_analysis(bbox, clms_rgb, ndvi, date_range)
+                result = _build_analysis(bbox, clms_rgb, ndvi, date_range)
+                _analysis_cache_set(cache_key, result)
+                return result
 
     # ── Fallback to bundled ──────────────────────────────────────
     if bbox_key in _BUNDLED_ANALYSIS:
-        return _BUNDLED_ANALYSIS[bbox_key]
+        result = copy.deepcopy(_BUNDLED_ANALYSIS[bbox_key])
+        _analysis_cache_set(cache_key, result)
+        return result
 
     # ── Try live even in bundled mode (CLMS is usually reliable) ──
     try:
@@ -606,12 +641,14 @@ def analyze_crop_ndvi(
         if clms_rgb is not None:
             ndvi = _compute_ndvi_matrix(bbox, date_range, resolution, resolution)
             if ndvi is not None:
-                return _build_analysis(bbox, clms_rgb, ndvi, date_range)
+                result = _build_analysis(bbox, clms_rgb, ndvi, date_range)
+                _analysis_cache_set(cache_key, result)
+                return result
     except Exception as exc:
         print(f"[crop_ndvi] Live fallback failed: {exc}")
 
     # ── Last resort: generic bundled ─────────────────────────────
-    return {
+    result = {
         "bbox": bbox,
         "item_id": None,
         "date": None,
@@ -620,6 +657,8 @@ def analyze_crop_ndvi(
         "error": "No data available for this region. Try Rhône Valley (4.67,44.71,4.97,45.01).",
         "crops": {},
     }
+    _analysis_cache_set(cache_key, result)
+    return result
 
 
 def _build_analysis(

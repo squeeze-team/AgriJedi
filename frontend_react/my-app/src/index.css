@@ -1,0 +1,255 @@
+@import 'tailwindcss';
+
+:root {
+  font-family: 'Avenir Next', 'Segoe UI', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #f8fafc;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.panel-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  background: #fff;
+  overflow: hidden;
+}
+
+.panel-title {
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+  padding: 0.75rem 1rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.loading-text {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.badge-up {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.badge-down {
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
+.badge-flat {
+  background: #fffbeb;
+  color: #ea580c;
+}
+
+.openai-chat .cs-main-container {
+  border: 0;
+  background: #ffffff;
+  height: 100% !important;
+  min-height: 0;
+}
+
+.openai-chat .cs-chat-container {
+  background: #ffffff;
+  height: 100%;
+  min-height: 0;
+}
+
+.openai-chat .cs-message-list {
+  background: #ffffff;
+  min-height: 0;
+}
+
+.openai-chat .cs-message--incoming .cs-message__content {
+  background: #f3f4f6;
+  color: #111827;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+}
+
+.openai-chat .cs-message--outgoing .cs-message__content {
+  background: #111827;
+  color: #f9fafb;
+  border-radius: 12px;
+}
+
+.openai-chat .cs-message-input {
+  border-top: 1px solid #e5e7eb;
+  background: #ffffff;
+}
+
+.openai-chat .cs-message-input__content-editor-wrapper {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  pointer-events: auto;
+}
+
+.openai-chat .cs-message-input__content-editor {
+  color: #111827;
+  min-height: 22px;
+  line-height: 1.5;
+  caret-color: #111827;
+  pointer-events: auto;
+  user-select: text;
+}
+
+.openai-chat .cs-message-input__content-editor-container {
+  pointer-events: auto;
+}
+
+.openai-chat .cs-button--send {
+  color: #111827;
+}
+
+.chat-dots {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+}
+
+.chat-dots span {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: #ffffff;
+  animation: chat-dot-bounce 0.9s infinite ease-in-out;
+}
+
+.chat-dots-dark span {
+  background: #111827;
+}
+
+.chat-dots-inline {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+}
+
+.chat-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.chat-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes chat-dot-bounce {
+  0%,
+  80%,
+  100% {
+    opacity: 0.4;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+.stage-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 2px solid #cbd5e1;
+  border-top-color: #111827;
+  animation: stage-spin 0.8s linear infinite;
+}
+
+@keyframes stage-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.chat-markdown {
+  font-size: 14px;
+  line-height: 1.45;
+  color: inherit;
+  word-break: break-word;
+}
+
+.chat-markdown p {
+  margin: 0 0 0.45rem;
+}
+
+.chat-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+  margin: 0.35rem 0 0.45rem 1.1rem;
+  padding: 0;
+}
+
+.chat-markdown li {
+  margin: 0.2rem 0;
+}
+
+.chat-markdown code {
+  background: rgba(15, 23, 42, 0.08);
+  border-radius: 6px;
+  padding: 0.08rem 0.35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.84em;
+}
+
+.chat-markdown pre {
+  margin: 0.4rem 0;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.9);
+  color: #f8fafc;
+  padding: 0.6rem 0.75rem;
+  overflow-x: auto;
+}
+
+.chat-markdown pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.chat-markdown a {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
+.chat-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.4rem 0;
+  font-size: 12px;
+}
+
+.chat-markdown th,
+.chat-markdown td {
+  border: 1px solid #cbd5e1;
+  padding: 0.2rem 0.35rem;
+}

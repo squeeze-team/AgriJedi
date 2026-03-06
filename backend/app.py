@@ -3,29 +3,38 @@ AgriIntel — FastAPI backend
 ============================
 Endpoints:
   GET /                        → health check
-  GET /map/overlay             → Sentinel-2 + CLMS overlay PNG
-  GET /weather/france          → monthly weather aggregates
-  GET /predict/yield           → yield anomaly prediction
-  GET /predict/price           → 3-month price direction forecast
-  GET /crops                   → available crop configs
-  GET /prices/history          → monthly price time-series
-  GET /yield/history           → annual yield time-series
-  GET /ndvi/stats              → NDVI summary statistics
+  POST /map/overlay            → Sentinel-2 + CLMS overlay PNG
+  POST /weather/france         → monthly weather aggregates
+  POST /predict/yield          → yield anomaly prediction
+  POST /predict/price          → 3-month price direction forecast
+  POST /crops                  → available crop configs
+  POST /prices/history         → monthly price time-series
+  POST /yield/history          → annual yield time-series
+  POST /ndvi/stats             → NDVI summary statistics
+  POST /chat/stream            → LangGraph + OpenRouter streaming chatbot
 
 Agent-oriented (POST JSON body, single-call):
   POST /agent/yield-analysis   → per-crop NDVI + yield forecast for a bbox
   POST /agent/market-overview  → 3-crop price history + weather trends
   POST /agent/market-signals   → financial market signals (futures, FX, oil, rates, WASDE)
-  GET  /agent/system-prompt    → macro context blob for LLM system prompt
-  GET  /market/weekly-chart    → weekly price series for frontend charts
+  POST /agent/system-prompt    → macro context blob for LLM system prompt
+  POST /market/weekly-chart    → weekly price series for frontend charts
 """
 
 import pandas as pd
+import json
+import asyncio
+from typing import Literal
 
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - optional dependency
+    def load_dotenv(*_args, **_kwargs):
+        return False
 
 from config import CROP_CONFIG, DEFAULT_CROP, FRANCE_BBOX
 
@@ -43,9 +52,12 @@ from services.market_finance import (
 from services.weather_power import get_weather_monthly
 from services.faostat import get_yield_history, compute_yield_features
 from services.prices_worldbank import get_price_history, compute_price_features
+from services.agent_full import stream_agent_events
 
 from features.build_features import build_feature_vector
 from features.models import predict_yield, predict_price
+
+load_dotenv()
 
 app = FastAPI(
     title="AgriIntel Demo",
@@ -62,10 +74,70 @@ app.add_middleware(
 )
 
 
+class ChatHistoryItem(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ChatStreamRequest(BaseModel):
+    message: str
+    history: list[ChatHistoryItem] = []
+
+
 # ─── Health check ────────────────────────────────────────────────
 @app.get("/")
 def root():
     return {"status": "ok", "service": "AgriIntel Demo"}
+
+
+@app.post("/chat/stream")
+async def chat_stream(payload: ChatStreamRequest):
+    """
+    Stream chat response as SSE.
+    Each event:
+      data: {"type":"delta","delta":"..."}
+      data: {"type":"done"}
+      data: {"type":"error","error":"..."}
+    """
+
+    async def sse_stream():
+        try:
+            # Immediate ack event so frontend can switch from "Submitting request" instantly.
+            ack_json = json.dumps(
+                {"type": "stage", "stage": "backend", "label": "Connected to backend stream"},
+                ensure_ascii=False,
+            )
+            yield f"data: {ack_json}\n\n"
+            await asyncio.sleep(0)
+
+            history_text = ""
+            if payload.history:
+                turns = []
+                for item in payload.history[-6:]:
+                    turns.append(f"{item.role}: {item.content}")
+                history_text = "\n".join(turns)
+
+            merged_query = payload.message if not history_text else (
+                f"Conversation context:\n{history_text}\n\nUser request:\n{payload.message}"
+            )
+
+            async for evt in stream_agent_events(merged_query):
+                payload_json = json.dumps(evt, ensure_ascii=False)
+                yield f"data: {payload_json}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as exc:  # pragma: no cover - runtime safety for streaming
+            payload_json = json.dumps({"type": "error", "error": str(exc)}, ensure_ascii=False)
+            yield f"data: {payload_json}\n\n"
+
+    return StreamingResponse(
+        sse_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ─── Available crops ─────────────────────────────────────────────
@@ -144,9 +216,10 @@ class WeeklyChartRequest(BaseModel):
     weeks: int = Field(default=52, ge=4, le=200, description="Number of weeks")
 
 
-# ─── Map overlay ─────────────────────────────────────────────────
 @app.post("/map/overlay")
-async def map_overlay(req: MapOverlayRequest):
+def map_overlay(
+    req: MapOverlayRequest,
+):
     """
     Return a PNG image combining Sentinel-2 RGB with
     the CLMS Crop Types overlay.
@@ -161,12 +234,19 @@ async def map_overlay(req: MapOverlayRequest):
         width=req.width,
         height=req.height,
     )
-    return StreamingResponse(png_bytes, media_type="image/png")
+    return Response(
+        content=png_bytes.getvalue(),
+        media_type="image/png",
+        headers={
+            "Cache-Control": "public, max-age=300",
+        },
+    )
 
 
-# ─── Satellite visualisation panel ────────────────────────────────
 @app.post("/satellite/view")
-async def satellite_view(req: SatelliteViewRequest):
+def satellite_view(
+    req: SatelliteViewRequest,
+):
     """
     Return a single satellite visualisation PNG for the given bbox and layer type.
 
@@ -190,20 +270,22 @@ async def satellite_view(req: SatelliteViewRequest):
         width=req.width,
         height=req.height,
     )
-    return StreamingResponse(
-        buf,
+    return Response(
+        content=buf.getvalue(),
         media_type="image/png",
         headers={
             "X-Item-Id": str(meta.get("item_id") or ""),
             "X-Item-Date": str(meta.get("date") or ""),
             "X-Cloud-Cover": str(meta.get("cloud_cover") or ""),
+            "X-Render-Cache": str(meta.get("render_cache") or "unknown"),
+            "Cache-Control": "public, max-age=300",
         },
     )
 
 
 # ─── Weather time-series ─────────────────────────────────────────
 @app.post("/weather/france")
-async def weather_france(req: WeatherRequest):
+def weather_france(req: WeatherRequest):
     """Return monthly-aggregated weather data for France (3×3 grid mean)."""
     data = get_weather_monthly(start_date=req.start, end_date=req.end)
     return JSONResponse(content=data)
@@ -211,7 +293,7 @@ async def weather_france(req: WeatherRequest):
 
 # ─── Yield prediction ────────────────────────────────────────────
 @app.post("/predict/yield")
-async def yield_prediction(req: YieldPredictionRequest):
+def yield_prediction(req: YieldPredictionRequest):
     """Predict national yield anomaly for the given crop."""
     if req.crop not in CROP_CONFIG:
         raise HTTPException(400, f"Unknown crop '{req.crop}'. Available: {list(CROP_CONFIG)}")
@@ -223,7 +305,7 @@ async def yield_prediction(req: YieldPredictionRequest):
 
 # ─── Price prediction ────────────────────────────────────────────
 @app.post("/predict/price")
-async def price_prediction(req: CropQueryRequest):
+def price_prediction(req: CropQueryRequest):
     """Forecast 3-month price direction for the given crop."""
     if req.crop not in CROP_CONFIG:
         raise HTTPException(400, f"Unknown crop '{req.crop}'. Available: {list(CROP_CONFIG)}")
@@ -235,7 +317,7 @@ async def price_prediction(req: CropQueryRequest):
 
 # ─── Price history ───────────────────────────────────────────────
 @app.post("/prices/history")
-async def price_history(req: CropQueryRequest):
+def price_history(req: CropQueryRequest):
     """Return monthly commodity price time-series for the given crop."""
     if req.crop not in CROP_CONFIG:
         raise HTTPException(400, f"Unknown crop '{req.crop}'. Available: {list(CROP_CONFIG)}")
@@ -254,7 +336,7 @@ async def price_history(req: CropQueryRequest):
 
 # ─── Yield history ──────────────────────────────────────────────
 @app.post("/yield/history")
-async def yield_history(req: CropQueryRequest):
+def yield_history(req: CropQueryRequest):
     """Return annual yield time-series for the given crop in France."""
     if req.crop not in CROP_CONFIG:
         raise HTTPException(400, f"Unknown crop '{req.crop}'. Available: {list(CROP_CONFIG)}")
@@ -274,7 +356,9 @@ async def yield_history(req: CropQueryRequest):
 
 # ─── NDVI statistics ────────────────────────────────────────────
 @app.post("/ndvi/stats")
-async def ndvi_stats(req: NdviStatsRequest):
+def ndvi_stats(
+    req: NdviStatsRequest,
+):
     """Return NDVI summary statistics (with fallback to bundled data)."""
     if req.crop not in CROP_CONFIG:
         raise HTTPException(400, f"Unknown crop '{req.crop}'. Available: {list(CROP_CONFIG)}")
@@ -285,7 +369,9 @@ async def ndvi_stats(req: NdviStatsRequest):
 
 # ─── Crop-level NDVI analysis ────────────────────────────────────
 @app.post("/analysis/crop-ndvi")
-async def crop_ndvi_analysis(req: CropNdviRequest):
+def crop_ndvi_analysis(
+    req: CropNdviRequest,
+):
     """
     Classify crop types via CLMS WMS colour-reverse-lookup, then
     compute per-crop NDVI statistics and a relative yield proxy.
@@ -332,7 +418,7 @@ class MarketOverviewRequest(BaseModel):
 
 
 @app.post("/agent/yield-analysis")
-async def agent_yield_analysis(req: YieldAnalysisRequest):
+def agent_yield_analysis(req: YieldAnalysisRequest):
     """
     **Agent endpoint** — Per-crop yield analysis for a geographic region.
 
@@ -408,7 +494,7 @@ async def agent_yield_analysis(req: YieldAnalysisRequest):
 
 
 @app.post("/agent/market-overview")
-async def agent_market_overview(req: MarketOverviewRequest):
+def agent_market_overview(req: MarketOverviewRequest):
     """
     **Agent endpoint** — Multi-crop price history + weather trends in one call.
 
@@ -531,7 +617,7 @@ class MarketSignalsRequest(BaseModel):
 
 
 @app.post("/agent/market-signals")
-async def agent_market_signals(req: MarketSignalsRequest):
+def agent_market_signals(req: MarketSignalsRequest):
     """
     **Agent endpoint** — Financial market context for agricultural analysis.
 
@@ -550,7 +636,7 @@ async def agent_market_signals(req: MarketSignalsRequest):
 
 
 @app.post("/agent/system-prompt")
-async def agent_system_prompt(req: SystemPromptRequest = SystemPromptRequest()):
+def agent_system_prompt(req: SystemPromptRequest = SystemPromptRequest()):
     """
     Returns a pre-formatted macro context block for injection into an
     LLM system prompt. Includes latest prices, returns, vol, WASDE,
@@ -611,7 +697,7 @@ async def agent_system_prompt(req: SystemPromptRequest = SystemPromptRequest()):
 
 
 @app.post("/market/weekly-chart")
-async def market_weekly_chart(req: WeeklyChartRequest):
+def market_weekly_chart(req: WeeklyChartRequest):
     """
     Return weekly close series for a single asset (for frontend charts).
     """
@@ -670,7 +756,7 @@ class CropReportRequest(BaseModel):
 
 
 @app.post("/agent/crop-report")
-async def agent_crop_report(req: CropReportRequest):
+def agent_crop_report(req: CropReportRequest):
     """
     **Agent endpoint** — Return a pre-built high-level intelligence brief
     for a single crop (wheat, corn, or grape).
