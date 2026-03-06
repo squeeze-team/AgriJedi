@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import calendar
+from datetime import date
 import re
 from typing import AsyncIterator
 
@@ -51,6 +53,31 @@ def build_agent_graph():
 def _chunk_text(text: str, size: int = 24):
     for i in range(0, len(text), size):
         yield text[i:i + size]
+
+
+def _format_num(value) -> str:
+    try:
+        number = float(value)
+    except Exception:
+        return str(value)
+    text = f"{number:.6f}".rstrip("0").rstrip(".")
+    return text if text else "0"
+
+
+def _subtract_months(d: date, months: int) -> date:
+    month_index = d.month - months
+    year = d.year
+    while month_index <= 0:
+        month_index += 12
+        year -= 1
+    day = min(d.day, calendar.monthrange(year, month_index)[1])
+    return date(year, month_index, day)
+
+
+def _latest_3m_range() -> str:
+    end_date = date.today()
+    start_date = _subtract_months(end_date, 3)
+    return f"{start_date.isoformat()}/{end_date.isoformat()}"
 
 
 def _sanitize_assistant_text(text: str) -> str:
@@ -147,5 +174,18 @@ async def stream_agent_events(user_query: str) -> AsyncIterator[dict]:
     final_text = state.get("final_advisory") or "No advisory was generated."
     final_text = _sanitize_assistant_text(str(final_text))
     yield {"type": "stage", "stage": "finalize", "label": f"[{len(_STAGE_ORDER)}/{len(_STAGE_ORDER)}] Finalizing response"}
+
+    bbox = state.get("bbox")
+    if isinstance(bbox, list) and len(bbox) == 4:
+        bbox_list = [_format_num(v) for v in bbox]
+        yield {
+            "type": "autofill",
+            "target": "satellite",
+            "region": "custom",
+            "bbox_list": bbox_list,
+            "bbox": ",".join(bbox_list),
+            "date_range": _latest_3m_range(),
+        }
+
     for part in _chunk_text(final_text):
         yield {"type": "delta", "delta": part}

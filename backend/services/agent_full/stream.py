@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import calendar
+from datetime import date
 import re
 import threading
 from typing import Any, AsyncIterator
@@ -36,6 +38,38 @@ def _get_graph():
 def _chunk_text(text: str, size: int = 24):
     for i in range(0, len(text), size):
         yield text[i:i + size]
+
+
+def _format_num(value: Any) -> str:
+    try:
+        number = float(value)
+    except Exception:
+        return str(value)
+    text = f"{number:.6f}".rstrip("0").rstrip(".")
+    return text if text else "0"
+
+
+def _bbox_strings_from_state(state: dict[str, Any]) -> list[str] | None:
+    bbox = state.get("bbox")
+    if isinstance(bbox, list) and len(bbox) == 4:
+        return [_format_num(v) for v in bbox]
+    return None
+
+
+def _subtract_months(d: date, months: int) -> date:
+    month_index = d.month - months
+    year = d.year
+    while month_index <= 0:
+        month_index += 12
+        year -= 1
+    day = min(d.day, calendar.monthrange(year, month_index)[1])
+    return date(year, month_index, day)
+
+
+def _latest_3m_range() -> str:
+    end_date = date.today()
+    start_date = _subtract_months(end_date, 3)
+    return f"{start_date.isoformat()}/{end_date.isoformat()}"
 
 
 def _sanitize_assistant_text(text: str) -> str:
@@ -114,6 +148,18 @@ async def stream_agent_events(user_query: str) -> AsyncIterator[dict[str, Any]]:
             final_text = str(rolling_state.get("final_advisory") or "No final advisory generated.")
             final_text = _sanitize_assistant_text(final_text)
             emit({"type": "stage", "stage": "finalize", "label": "Finalizing response"})
+
+            bbox_list = _bbox_strings_from_state(rolling_state)
+            if bbox_list:
+                emit({
+                    "type": "autofill",
+                    "target": "satellite",
+                    "region": "custom",
+                    "bbox_list": bbox_list,
+                    "bbox": ",".join(bbox_list),
+                    "date_range": _latest_3m_range(),
+                })
+
             for part in _chunk_text(final_text):
                 emit({"type": "delta", "delta": part})
         except Exception as exc:  # pragma: no cover

@@ -17,6 +17,16 @@ type ChatMsg = {
   direction: 'incoming' | 'outgoing';
 };
 
+type SatelliteAutofillPayload = {
+  bbox: string;
+  bboxList: string[];
+  dateRange: string;
+};
+
+interface ChatBubbleProps {
+  onAutofillSatellite?: (payload: SatelliteAutofillPayload) => void;
+}
+
 function createAssistantReply(text: string) {
   const lower = text.toLowerCase();
   if (lower.includes('yield')) {
@@ -31,7 +41,7 @@ function createAssistantReply(text: string) {
   return 'I can help you navigate map, weather, price, prediction, and crop analysis modules.';
 }
 
-export function ChatBubble() {
+export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
@@ -144,12 +154,26 @@ export function ChatBubble() {
             delta?: string;
             error?: string;
             label?: string;
+            bbox?: string;
+            bbox_list?: string[];
+            date_range?: string;
           };
           if (evt.type === 'delta' && evt.delta) {
             receivedDelta = true;
             appendAssistantChunk(assistantId, evt.delta);
           } else if (evt.type === 'stage' && evt.label) {
             setCurrentStage(evt.label);
+          } else if (evt.type === 'autofill') {
+            const bboxList = Array.isArray(evt.bbox_list) ? evt.bbox_list : [];
+            const bbox = evt.bbox ?? bboxList.join(',');
+            const dateRange = evt.date_range ?? '';
+            if (bbox && dateRange) {
+              onAutofillSatellite?.({
+                bbox,
+                bboxList,
+                dateRange,
+              });
+            }
           } else if (evt.type === 'done') {
             streamDone = true;
             setCurrentStage(null);

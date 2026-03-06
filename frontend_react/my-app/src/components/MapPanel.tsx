@@ -1,4 +1,5 @@
-import { MapContainer, Rectangle, TileLayer, WMSTileLayer } from 'react-leaflet';
+import { useEffect } from 'react';
+import { MapContainer, Rectangle, TileLayer, WMSTileLayer, useMap } from 'react-leaflet';
 
 const CLMS_WMS_URL = 'https://geoserver.vlcc.geoville.com/geoserver/ows';
 const CLMS_LAYER = 'HRL_CPL:CTY_S2021';
@@ -19,6 +20,34 @@ function parseBboxToBounds(bbox: string): Bounds | null {
   return [[south, west], [north, east]];
 }
 
+function AutoFitBounds({ bounds }: { bounds: Bounds | null }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!bounds) {
+      return;
+    }
+    const fitToBounds = () => {
+      const size = map.getSize();
+      const verticalPadding = Math.round(size.y * 0.1);
+      const horizontalPadding = Math.round(size.x * 0.08);
+
+      map.fitBounds(bounds, {
+        paddingTopLeft: [horizontalPadding, verticalPadding],
+        paddingBottomRight: [horizontalPadding, verticalPadding],
+        animate: true,
+        duration: 0.45,
+        maxZoom: 18,
+      });
+    };
+
+    map.invalidateSize();
+    fitToBounds();
+  }, [map, bounds]);
+
+  return null;
+}
+
 export function MapPanel({ bbox }: MapPanelProps) {
   const bounds = parseBboxToBounds(bbox);
 
@@ -27,6 +56,7 @@ export function MapPanel({ bbox }: MapPanelProps) {
       <div className="panel-title">Crop Distribution - CLMS + Sentinel-2</div>
       <div className="relative h-[420px] w-full">
         <MapContainer center={[46.6, 2.5]} zoom={6} className="h-full w-full">
+          <AutoFitBounds bounds={bounds} />
           <TileLayer
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             attribution="&copy; OpenStreetMap contributors"

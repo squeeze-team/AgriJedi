@@ -89,14 +89,16 @@ function App() {
     setIsPriceLoading(false);
   }
 
-  async function loadSatelliteViews() {
-    setMapBbox(bbox);
+  async function loadSatelliteViewsBy(nextBbox: string, nextDate: string) {
+    setBbox(nextBbox);
+    setSatDate(nextDate);
+    setMapBbox(nextBbox);
 
     setSatelliteViews((previous) => {
       const next = { ...previous };
       satelliteLayers.forEach((layer) => {
         next[layer] = {
-          src: buildSatelliteUrl(bbox, satDate, layer),
+          src: buildSatelliteUrl(nextBbox, nextDate, layer),
           status: 'loading',
         };
       });
@@ -106,7 +108,7 @@ function App() {
     setAnalysisLoading(true);
     setAnalysisError(null);
     try {
-      const result = await fetchCropAnalysis(bbox, satDate);
+      const result = await fetchCropAnalysis(nextBbox, nextDate);
       setAnalysisData(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -115,6 +117,10 @@ function App() {
     } finally {
       setAnalysisLoading(false);
     }
+  }
+
+  async function loadSatelliteViews() {
+    await loadSatelliteViewsBy(bbox, satDate);
   }
 
   function setLayerStatus(layer: SatelliteLayer, status: SatelliteViewState['status']) {
@@ -155,7 +161,11 @@ function App() {
       />
 
       <CropAnalysisSection data={analysisData} isLoading={analysisLoading} error={analysisError} />
-      <ChatBubble />
+      <ChatBubble
+        onAutofillSatellite={({ bbox: nextBbox, dateRange }) => {
+          void loadSatelliteViewsBy(nextBbox, dateRange);
+        }}
+      />
     </div>
   );
 }
