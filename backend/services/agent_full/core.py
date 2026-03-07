@@ -1144,7 +1144,7 @@ def parse_env_int(var_name: str, default: int) -> int:
 
 
 def resolve_llm_endpoint_and_key() -> tuple[str, str | None]:
-    endpoint = os.getenv("OPENAI_API_URL", "https://api.openai.com/v1/chat/completions").strip()
+    endpoint = os.getenv("OPENAI_API_URL").strip()
     api_key = os.getenv("OPENAI_API_KEY")
     return endpoint, api_key
 

@@ -8,8 +8,10 @@ import type { CropLegendItem } from './components/CropLegend';
 import { FranceEventsPanel } from './components/FranceEventsPanel';
 import { RiskAnalysisPanel } from './components/RiskAnalysisPanel';
 import { SatelliteSection } from './components/SatelliteSection';
+import { SessionUsageNoticeModal } from './components/SessionUsageNoticeModal';
 import { WeatherChartPanel } from './components/WeatherChartPanel';
 import {
+  fetchFeatureFlags,
   fetchSatelliteLayerImage,
   fetchAllPriceHistory,
   fetchCropAnalysis,
@@ -18,6 +20,8 @@ import {
   type CropAnalysisResponse,
   type MultiPriceHistoryData,
   type SatelliteLayer,
+  type UsageLimits,
+  type UsageRemaining,
   type WeatherData,
   type WeatherForecastData,
 } from './services/api';
@@ -32,6 +36,12 @@ const satelliteLayers: Array<Exclude<SatelliteLayer, 'false_color'>> = ['rgb', '
 const defaultBbox = '4.67,44.71,4.97,45.01';
 const defaultDate = '2025-06-01/2025-09-01';
 let hasTriggeredInitialLoad = false;
+const defaultUsageLimits: UsageLimits = {
+  session_chat_max: 3,
+  session_analysis_max: 3,
+  device_daily_max: 10,
+  ip_daily_max: 200,
+};
 
 const groupLegendColor: Record<string, string> = {
   maize: '#f4de7a',
@@ -63,6 +73,9 @@ function App() {
   const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
   const [weatherForecast, setWeatherForecast] = useState<WeatherForecastData | null>(null);
   const [priceData, setPriceData] = useState<MultiPriceHistoryData | null>(null);
+  const [usageNoticeOpen, setUsageNoticeOpen] = useState(false);
+  const [usageLimits, setUsageLimits] = useState<UsageLimits>(defaultUsageLimits);
+  const [usageRemaining, setUsageRemaining] = useState<UsageRemaining | undefined>(undefined);
 
   const [bbox, setBbox] = useState(defaultBbox);
   const [satDate, setSatDate] = useState(defaultDate);
@@ -103,6 +116,23 @@ function App() {
 
   useEffect(() => {
     fetchAllPriceHistory().then(setPriceData);
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const flags = await fetchFeatureFlags();
+        if (flags.usage_limits) {
+          setUsageLimits(flags.usage_limits);
+        }
+        if (flags.usage_remaining) {
+          setUsageRemaining(flags.usage_remaining);
+        }
+        setUsageNoticeOpen(Boolean(flags.show_session_limits_notice));
+      } catch {
+        setUsageNoticeOpen(false);
+      }
+    })();
   }, []);
 
   async function loadSatelliteViewsBy(nextBbox: string, nextDate: string) {
@@ -185,6 +215,12 @@ function App() {
 
   return (
     <div className="dashboard-shell min-h-screen text-slate-100">
+      <SessionUsageNoticeModal
+        open={usageNoticeOpen}
+        limits={usageLimits}
+        remaining={usageRemaining}
+        onClose={() => setUsageNoticeOpen(false)}
+      />
       <Header />
 
       <main className="mx-auto grid w-full max-w-[1400px] grid-cols-1 gap-4 px-5 py-5 md:px-7 lg:grid-cols-2">
