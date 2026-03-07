@@ -1,4 +1,7 @@
-export const API_BASE = 'http://localhost:8000';
+export const API_BASE =
+  typeof window !== 'undefined' && window.location?.origin
+    ? window.location.origin.replace(/\/+$/, '')
+    : '';
 
 export type Crop = 'wheat' | 'maize' | 'grape';
 export type PriceDirection = 'Up' | 'Down' | 'Flat';
