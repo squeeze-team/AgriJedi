@@ -45,7 +45,7 @@ export function SatelliteSection({
   return (
     <section className="mx-auto w-full max-w-[1400px] px-5 pb-7 md:px-7">
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <h2 className="text-lg font-bold tracking-[0.06em] text-slate-100">Satellite Imagery - Sentinel-2 + CLMS</h2>
+        <h2 className="text-lg font-bold tracking-[0.06em] text-slate-100">Satellite Crop Monitoring</h2>
 
         <div className="flex flex-wrap items-center gap-2 text-sm text-slate-300">
           <label className="flex items-center gap-1">

@@ -152,6 +152,7 @@ async def stream_agent_events(user_query: str) -> AsyncIterator[dict[str, Any]]:
 
             bbox_list = _bbox_strings_from_state(rolling_state)
             if bbox_list:
+                crop_type = rolling_state.get("crop_type")
                 emit({
                     "type": "autofill",
                     "target": "satellite",
@@ -159,6 +160,7 @@ async def stream_agent_events(user_query: str) -> AsyncIterator[dict[str, Any]]:
                     "bbox_list": bbox_list,
                     "bbox": ",".join(bbox_list),
                     "date_range": _latest_3m_range(),
+                    "crop_type": str(crop_type) if crop_type else "",
                 })
 
             for part in _chunk_text(final_text):

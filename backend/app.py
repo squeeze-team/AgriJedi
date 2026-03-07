@@ -13,6 +13,7 @@ Endpoints:
   POST /ndvi/stats             → NDVI summary statistics
   POST /chat/stream            → LangGraph + OpenRouter streaming chatbot
   POST /analysis/report        → structured AI risk analysis report for RiskAnalysisPanel
+  POST /events/gdacs/france    → GDACS hazard events filtered to France
 
 Agent-oriented (POST JSON body, single-call):
   POST /agent/yield-analysis   → per-crop NDVI + yield forecast for a bbox
@@ -26,6 +27,9 @@ import pandas as pd
 import json
 import asyncio
 from typing import Any, Literal
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -102,6 +106,11 @@ class AnalysisReportRequest(BaseModel):
         ge=100,
         le=2000,
     )
+
+
+class GdacsFranceEventsRequest(BaseModel):
+    days: int = Field(default=14, ge=1, le=60, description="Lookback window in days")
+    limit: int = Field(default=8, ge=1, le=30, description="Max number of events returned")
 
 
 def _parse_bbox_string(bbox_raw: str) -> list[float]:
@@ -284,6 +293,27 @@ async def chat_stream(payload: ChatStreamRequest):
     )
 
 
+@app.post("/events/gdacs/france")
+def gdacs_france_events(req: GdacsFranceEventsRequest):
+    try:
+        data = _fetch_gdacs_france_events(days=req.days, limit=req.limit)
+        return JSONResponse(content=data)
+    except Exception as exc:
+        now = datetime.now(timezone.utc).isoformat()
+        return JSONResponse(
+            status_code=200,
+            content={
+                "feed_ok": False,
+                "all_good": False,
+                "country": "France",
+                "lookback_days": req.days,
+                "checked_at": now,
+                "events": [],
+                "message": f"GDACS feed unavailable: {exc}",
+            },
+        )
+
+
 @app.post("/analysis/report")
 def analysis_report(req: AnalysisReportRequest):
     bbox = _parse_bbox_string(req.bbox)
@@ -388,6 +418,134 @@ class SystemPromptRequest(BaseModel):
 class WeeklyChartRequest(BaseModel):
     symbol: str = Field(default="wheat_fut", description="Asset symbol: wheat_fut, corn_fut, eurusd, oil_wti, us10y_yield")
     weeks: int = Field(default=52, ge=4, le=200, description="Number of weeks")
+
+
+def _norm_token_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        merged = []
+        for item in value:
+            merged.extend(_norm_token_list(item))
+        return merged
+    text = str(value).strip()
+    if not text:
+        return []
+    if text.startswith("[") and text.endswith("]"):
+        try:
+            parsed = json.loads(text)
+            return _norm_token_list(parsed)
+        except Exception:
+            pass
+    normalized = (
+        text.replace("|", ",")
+        .replace(";", ",")
+        .replace("/", ",")
+        .replace("  ", " ")
+    )
+    return [token.strip().lower() for token in normalized.split(",") if token.strip()]
+
+
+def _is_france_event(properties: dict[str, Any]) -> bool:
+    france_tokens = {"fr", "fra", "france", "french republic"}
+    candidate_keys = (
+        "country",
+        "countries",
+        "countryname",
+        "country_name",
+        "iso2",
+        "iso3",
+        "iso",
+    )
+    tokens: list[str] = []
+    for key in candidate_keys:
+        if key in properties:
+            tokens.extend(_norm_token_list(properties.get(key)))
+    if any(token in france_tokens for token in tokens):
+        return True
+    joined = " ".join(tokens)
+    return "france" in joined or " fra " in f" {joined} "
+
+
+def _pick_event_value(properties: dict[str, Any], *keys: str, default: Any = None) -> Any:
+    for key in keys:
+        if key in properties and properties[key] not in (None, ""):
+            return properties[key]
+    return default
+
+
+def _fetch_gdacs_france_events(days: int, limit: int) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    from_date = (now - timedelta(days=days)).strftime("%Y-%m-%d")
+    to_date = now.strftime("%Y-%m-%d")
+    params = urlencode(
+        {
+            "fromdate": from_date,
+            "todate": to_date,
+            "alertlevel": "Green;Orange;Red",
+            "format": "geojson",
+        }
+    )
+    url = f"https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP?{params}"
+    request = Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "AgriIntel/1.0",
+        },
+    )
+
+    with urlopen(request, timeout=15) as response:  # nosec B310
+        payload = json.loads(response.read().decode("utf-8"))
+
+    features = payload.get("features", []) if isinstance(payload, dict) else []
+    france_events: list[dict[str, Any]] = []
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        properties = feature.get("properties", {})
+        if not isinstance(properties, dict):
+            continue
+        if not _is_france_event(properties):
+            continue
+
+        event_id = _pick_event_value(properties, "eventid", "episodeid", "id", default="")
+        hazard = _pick_event_value(properties, "eventtype", "type", default="UNKNOWN")
+        title = _pick_event_value(properties, "name", "eventname", default=f"{hazard} event")
+        alert_level = _pick_event_value(properties, "alertlevel", default="unknown")
+        start_date = _pick_event_value(properties, "fromdate", "begindate", "date", default="")
+        end_date = _pick_event_value(properties, "todate", "enddate", default="")
+        country = _pick_event_value(properties, "country", "countryname", default="France")
+        details_url = _pick_event_value(properties, "url", "link", default="")
+
+        france_events.append(
+            {
+                "id": str(event_id),
+                "title": str(title),
+                "hazard": str(hazard),
+                "alert_level": str(alert_level).lower(),
+                "start_date": str(start_date),
+                "end_date": str(end_date),
+                "country": str(country),
+                "url": str(details_url),
+            }
+        )
+
+    france_events = sorted(
+        france_events,
+        key=lambda event: event.get("start_date", ""),
+        reverse=True,
+    )[:limit]
+
+    return {
+        "feed_ok": True,
+        "all_good": len(france_events) == 0,
+        "country": "France",
+        "lookback_days": days,
+        "checked_at": now.isoformat(),
+        "events": france_events,
+        "message": "All good" if len(france_events) == 0 else f"{len(france_events)} event(s) found",
+    }
 
 
 @app.post("/map/overlay")

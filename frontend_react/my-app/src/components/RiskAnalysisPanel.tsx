@@ -70,6 +70,14 @@ function riskBadge(val: number) {
   return 'text-rose-300';
 }
 
+function cropIcon(cropType: string) {
+  const crop = cropType.toLowerCase();
+  if (crop.includes('grape')) return '🍇';
+  if (crop.includes('maize') || crop.includes('corn')) return '🌽';
+  if (crop.includes('wheat')) return '🌾';
+  return '🥬';
+}
+
 /** Keys rendered in the left summary panel — skip in right detail grid. */
 const LEFT_KEYS = new Set([
   'risk_score',
@@ -93,9 +101,10 @@ const DETAIL_KEY_ORDER = [
 interface RiskAnalysisPanelProps {
   bbox?: string;
   autoRunSignal?: number;
+  cropType?: string;
 }
 
-export function RiskAnalysisPanel({ bbox = '', autoRunSignal = 0 }: RiskAnalysisPanelProps) {
+export function RiskAnalysisPanel({ bbox = '', autoRunSignal = 0, cropType }: RiskAnalysisPanelProps) {
   const [report, setReport] = useState<AnalysisReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,7 +113,7 @@ export function RiskAnalysisPanel({ bbox = '', autoRunSignal = 0 }: RiskAnalysis
     setLoading(true);
     setError(null);
     try {
-      const next = await fetchAnalysisReport(bbox);
+      const next = await fetchAnalysisReport(bbox, { crop: cropType });
       setReport(next);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown analysis error';
@@ -240,7 +249,7 @@ export function RiskAnalysisPanel({ bbox = '', autoRunSignal = 0 }: RiskAnalysis
 
             {/* Crop type chip */}
             <div className="flex w-full items-center gap-2 rounded-lg border border-cyan-400/20 bg-slate-900/70 px-3 py-2">
-              <span className="text-base">🌾</span>
+              <span className="text-base">{cropIcon(report.crop_type)}</span>
               <div>
                 <div className="text-[10px] font-medium uppercase tracking-wider text-slate-400">Crop</div>
                 <div className="text-sm font-semibold capitalize text-slate-100">{report.crop_type}</div>
