@@ -1,0 +1,11 @@
+services:
+  agrimaster:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env
+    container_name: agrimaster-app
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

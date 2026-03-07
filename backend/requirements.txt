@@ -14,7 +14,7 @@ openpyxl>=3.1          # for reading World Bank Excel sheets
 Pillow>=10.2           # image manipulation for overlays
 yfinance>=0.2          # commodity futures / FX / rates from Yahoo Finance
 # httpx>=0.34              # for async HTTP requests
-httpx>=0.34              # for async HTTP requests
+httpx       # for async HTTP requests
 langgraph>=0.2
 langchain-openai>=0.3
 python-dotenv>=1.0
