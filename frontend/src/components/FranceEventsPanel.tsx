@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchFranceGdacsEvents, type GdacsFranceEvent, type GdacsFranceEventsResponse } from '../services/api';
+import { fetchEuropeGdacsEvents, type GdacsEuropeEvent, type GdacsEuropeEventsResponse } from '../services/api';
 
 function alertBadgeClass(level: string) {
   const normalized = level.toLowerCase();
@@ -16,7 +16,7 @@ function formatDate(value: string) {
   return parsed.toISOString().slice(0, 10);
 }
 
-function EventRow({ event }: { event: GdacsFranceEvent }) {
+function EventRow({ event }: { event: GdacsEuropeEvent }) {
   return (
     <div className="rounded-lg border border-cyan-400/20 bg-slate-900/50 px-3 py-2">
       <div className="mb-1 flex items-start justify-between gap-2">
@@ -44,7 +44,7 @@ function EventRow({ event }: { event: GdacsFranceEvent }) {
 }
 
 export function FranceEventsPanel() {
-  const [data, setData] = useState<GdacsFranceEventsResponse | null>(null);
+  const [data, setData] = useState<GdacsEuropeEventsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,7 +52,7 @@ export function FranceEventsPanel() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetchFranceGdacsEvents(14, 8);
+      const response = await fetchEuropeGdacsEvents(14, 8);
       setData(response);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
@@ -73,7 +73,7 @@ export function FranceEventsPanel() {
   return (
     <section className="panel-card">
       <div className="panel-title flex items-center justify-between gap-2">
-        <span>France Hazard Events (GDACS)</span>
+        <span>Europe Hazard Events (GDACS)</span>
         <button
           type="button"
           onClick={() => void loadEvents()}
@@ -100,7 +100,7 @@ export function FranceEventsPanel() {
         )}
         {!loading && !error && data?.all_good && (
           <div className="rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-sm font-semibold text-emerald-200">
-            No active hazard events detected in France.
+            No active hazard events detected in Europe.
           </div>
         )}
         {!loading && !error && data && data.events.length > 0 && (

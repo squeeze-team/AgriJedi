@@ -1,4 +1,20 @@
-export const API_BASE = 'http://localhost:8000';
+function resolveApiBase(): string {
+  if (typeof window === 'undefined' || !window.location) {
+    return '';
+  }
+
+  const { protocol, hostname, port, origin } = window.location;
+  const normalizedOrigin = origin.replace(/\/+$/, '');
+
+  // Dev server (Vite) runs on 5173/5174..., while backend stays on 8000.
+  if (port && port !== '8000') {
+    return `${protocol}//${hostname}:8000`;
+  }
+
+  return normalizedOrigin;
+}
+
+export const API_BASE = resolveApiBase();
 
 export type Crop = 'wheat' | 'maize' | 'grape';
 export type PriceDirection = 'Up' | 'Down' | 'Flat';
@@ -8,6 +24,23 @@ export interface WeatherData {
   months: string[];
   PRECTOTCORR: number[];
   T2M: number[];
+}
+
+export interface WeatherForecastDay {
+  date: string;
+  temp_max_c: number | null;
+  temp_min_c: number | null;
+  precip_mm: number | null;
+  wind_kmh: number | null;
+  weather_code: number | null;
+}
+
+export interface WeatherForecastData {
+  source: string;
+  latitude: number;
+  longitude: number;
+  timezone: string;
+  days: WeatherForecastDay[];
 }
 
 export interface PriceHistoryData {
@@ -121,6 +154,26 @@ export async function fetchWeather(): Promise<WeatherData> {
     return demoWeatherData();
   } catch {
     return demoWeatherData();
+  }
+}
+
+export async function fetchWeatherForecast(days = 7): Promise<WeatherForecastData> {
+  try {
+    const response = await fetch(`${API_BASE}/weather/france/forecast`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ days }),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const data = (await response.json()) as Partial<WeatherForecastData>;
+    if (data.days && data.days.length > 0) {
+      return data as WeatherForecastData;
+    }
+    return demoWeatherForecast(days);
+  } catch {
+    return demoWeatherForecast(days);
   }
 }
 
@@ -312,7 +365,7 @@ export async function fetchAnalysisReport(
   return (await response.json()) as AnalysisReport;
 }
 
-export interface GdacsFranceEvent {
+export interface GdacsEuropeEvent {
   id: string;
   title: string;
   hazard: string;
@@ -323,18 +376,18 @@ export interface GdacsFranceEvent {
   url: string;
 }
 
-export interface GdacsFranceEventsResponse {
+export interface GdacsEuropeEventsResponse {
   feed_ok: boolean;
   all_good: boolean;
-  country: string;
+  region: string;
   lookback_days: number;
   checked_at: string;
-  events: GdacsFranceEvent[];
+  events: GdacsEuropeEvent[];
   message: string;
 }
 
-export async function fetchFranceGdacsEvents(days = 14, limit = 8): Promise<GdacsFranceEventsResponse> {
-  const response = await fetch(`${API_BASE}/events/gdacs/france`, {
+export async function fetchEuropeGdacsEvents(days = 14, limit = 8): Promise<GdacsEuropeEventsResponse> {
+  const response = await fetch(`${API_BASE}/events/gdacs/europe`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ days, limit }),
@@ -342,7 +395,7 @@ export async function fetchFranceGdacsEvents(days = 14, limit = 8): Promise<Gdac
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
-  return (await response.json()) as GdacsFranceEventsResponse;
+  return (await response.json()) as GdacsEuropeEventsResponse;
 }
 
 function demoWeatherData(): WeatherData {
@@ -355,6 +408,36 @@ function demoWeatherData(): WeatherData {
     ],
     PRECTOTCORR: [58.0, 45.5, 50.2, 68.7, 78.3, 38.1, 28.5, 32.0, 52.4, 72.8, 68.5, 74.2, 55.8, 42.0, 60.1, 70.5, 62.0, 40.2, 30.5, 35.8, 55.0, 76.0, 72.5, 68.0],
     T2M: [4.8, 6.9, 9.8, 12.5, 15.9, 19.8, 23.2, 22.5, 18.2, 13.4, 7.9, 5.2, 4.5, 5.9, 8.7, 11.4, 14.8, 19.5, 22.8, 21.9, 17.8, 13.0, 8.0, 5.5],
+  };
+}
+
+function demoWeatherForecast(days: number): WeatherForecastData {
+  const today = new Date();
+  const safeDays = Math.max(1, Math.min(days, 10));
+  const weatherCodes = [3, 1, 61, 63, 2, 0, 3, 1, 2, 61];
+  const maxArr = [11, 13, 14, 12, 10, 9, 11, 13, 14, 12];
+  const minArr = [4, 5, 6, 5, 3, 2, 4, 5, 6, 5];
+  const precipArr = [1.2, 0.0, 3.5, 6.2, 0.8, 0.0, 2.1, 0.3, 1.8, 4.0];
+  const windArr = [17, 14, 20, 23, 16, 13, 18, 15, 14, 19];
+  const daysData: WeatherForecastDay[] = [];
+  for (let i = 0; i < safeDays; i += 1) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
+    daysData.push({
+      date: d.toISOString().slice(0, 10),
+      temp_max_c: maxArr[i],
+      temp_min_c: minArr[i],
+      precip_mm: precipArr[i],
+      wind_kmh: windArr[i],
+      weather_code: weatherCodes[i],
+    });
+  }
+  return {
+    source: 'demo-fallback',
+    latitude: 46.603354,
+    longitude: 1.888334,
+    timezone: 'Europe/Paris',
+    days: daysData,
   };
 }
 
