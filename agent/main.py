@@ -79,6 +79,7 @@ class CropHealthData(TypedDict, total=False):
 class WeatherForecast(TypedDict, total=False):
     days: int
     source: str
+    temperature_c: float
     soil_moisture_pct: float
     precipitation_mm: float
     flood_risk: float
@@ -106,7 +107,7 @@ class QueryAnalysisResult(TypedDict, total=False):
     field_name: str | None
     need_geo: bool
     bbox: List[float]
-    crop_type: str
+    crop_type: str | None
     analysis_report: str
 
 
@@ -117,7 +118,7 @@ class AgriState(TypedDict, total=False):
     requested_api_nodes: List[str]
     api_routing_summary: str
     location_name: str
-    crop_type: str
+    crop_type: str | None
     query_analysis_report: str
     query_analysis_debug: str
     query_analysis_error: str
@@ -141,7 +142,7 @@ class AgriState(TypedDict, total=False):
     crop_report_data: Dict[str, Any]
     crop_report_debug: str
     crop_report_error: str
-    market_focus_crop: str
+    market_focus_crop: str | None
     market_price_stats: Dict[str, Any]
     crop_health_data: CropHealthData
     weather_risk_score: float
@@ -452,6 +453,7 @@ class FranceApiAdapters(BaseModel):
         return {
             "days": 14,
             "source": f"{self.config.weather} via Open-Meteo",
+            "temperature_c": avg_temp,
             "soil_moisture_pct": avg_humidity,
             "precipitation_mm": total_rain,
             "flood_risk": flood_risk,
@@ -759,7 +761,7 @@ def parse_json_object_from_text(text: str) -> Dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def infer_crop_type_from_query(user_query: str, fallback_crop: str) -> str:
+def infer_crop_type_from_query(user_query: str, fallback_crop: str | None = None) -> str | None:
     query = user_query.lower()
     crop_aliases = [
         "wheat",
@@ -775,12 +777,15 @@ def infer_crop_type_from_query(user_query: str, fallback_crop: str) -> str:
         "cotton",
     ]
     for crop in crop_aliases:
-        if crop in query:
+        if re.search(rf"\b{re.escape(crop)}\b", query):
             return crop
-    return fallback_crop
+    if fallback_crop:
+        normalized_fallback = normalize_crop_type(fallback_crop)
+        return normalized_fallback or None
+    return None
 
 
-def normalize_crop_type(crop: str) -> str:
+def normalize_crop_type(crop: Any) -> str:
     aliases = {
         "corn": "maize",
         "soybean": "soy",
@@ -789,13 +794,13 @@ def normalize_crop_type(crop: str) -> str:
         "vineyards": "grape",
         "wine": "grape",
     }
-    value = crop.strip().lower()
+    value = str(crop or "").strip().lower()
     if not value:
-        return "wheat"
+        return ""
     return aliases.get(value, value)
 
 
-def map_crop_type_to_yield_group(crop_type: str) -> str:
+def map_crop_type_to_yield_group(crop_type: Any) -> str:
     crop = normalize_crop_type(crop_type)
     mapping = {
         "wheat": "wheat",
@@ -813,16 +818,20 @@ def map_crop_type_to_yield_group(crop_type: str) -> str:
     return mapping.get(crop, "other")
 
 
-def map_crop_type_to_market_crop(crop_type: str) -> str:
+def map_crop_type_to_market_crop(crop_type: Any) -> str | None:
     crop = normalize_crop_type(crop_type)
+    if not crop:
+        return None
     if crop == "maize":
         return "maize"
     if crop == "grape":
         return "grape"
-    return "wheat"
+    if crop == "wheat":
+        return "wheat"
+    return None
 
 
-def map_crop_type_to_report_crop(crop_type: str) -> str | None:
+def map_crop_type_to_report_crop(crop_type: Any) -> str | None:
     crop = normalize_crop_type(crop_type)
     if crop == "wheat":
         return "wheat"
@@ -856,7 +865,7 @@ def normalize_requested_api_nodes(raw_nodes: Any) -> List[str]:
 
 def infer_requested_api_nodes_fallback(
     user_query: str,
-    crop_type: str,
+    crop_type: str | None,
     run_mode: str,
 ) -> List[str]:
     if normalize_run_mode(run_mode) == "analysis":
@@ -935,7 +944,7 @@ def infer_requested_api_nodes_fallback(
 
 def build_llm_api_router_decision(
     user_query: str,
-    crop_type: str,
+    crop_type: str | None,
 ) -> Dict[str, Any] | None:
     if httpx is None:
         return None
@@ -1028,7 +1037,7 @@ def build_llm_api_router_decision(
 
 def infer_requested_api_nodes(
     user_query: str,
-    crop_type: str,
+    crop_type: str | None,
     run_mode: str,
 ) -> Dict[str, Any]:
     mode = normalize_run_mode(run_mode)
@@ -1297,35 +1306,51 @@ def bbox_area_hectares(bbox: List[float]) -> float:
 
 def fallback_query_analysis(
     user_query: str,
-    fallback_crop: str,
+    fallback_crop: str | None,
 ) -> QueryAnalysisResult:
     query = user_query.strip()
     crop = normalize_crop_type(infer_crop_type_from_query(query, fallback_crop))
+    crop_or_none = crop or None
     parsed_bbox = extract_bbox_from_text(query)
     if parsed_bbox:
-        return {
+        result: QueryAnalysisResult = {
             "field_name": None,
             "need_geo": False,
             "bbox": parsed_bbox,
-            "crop_type": crop,
             "analysis_report": (
-                f"Parsed bbox {parsed_bbox} from user query for crop {crop}. Geocoding skipped."
+                (
+                    f"Parsed bbox {parsed_bbox} from user query for crop {crop}. Geocoding skipped."
+                    if crop_or_none
+                    else f"Parsed bbox {parsed_bbox} from user query. Geocoding skipped."
+                )
             ),
         }
+        if crop_or_none:
+            result["crop_type"] = crop_or_none
+        return result
 
     central = extract_lat_lon_from_text(query)
     if central:
         parsed_bbox = bbox_from_center_lat_lon(central[0], central[1])
-        return {
+        result = {
             "field_name": None,
             "need_geo": False,
             "bbox": parsed_bbox,
-            "crop_type": crop,
             "analysis_report": (
-                f"Parsed center coordinates lat {central[0]}, lon {central[1]} and converted "
-                f"to bbox {parsed_bbox} for crop {crop}. Geocoding skipped."
+                (
+                    f"Parsed center coordinates lat {central[0]}, lon {central[1]} and converted "
+                    f"to bbox {parsed_bbox} for crop {crop}. Geocoding skipped."
+                    if crop_or_none
+                    else (
+                        f"Parsed center coordinates lat {central[0]}, lon {central[1]} and converted "
+                        f"to bbox {parsed_bbox}. Geocoding skipped."
+                    )
+                )
             ),
         }
+        if crop_or_none:
+            result["crop_type"] = crop_or_none
+        return result
 
     location = ""
     match = re.search(
@@ -1338,23 +1363,29 @@ def fallback_query_analysis(
     if not location:
         location = "Unknown Farm, France"
 
-    return {
+    result = {
         "field_name": location,
         "need_geo": True,
-        "crop_type": crop,
-        "analysis_report": f"Parsed field name '{location}' and crop '{crop}' from user query.",
+        "analysis_report": (
+            f"Parsed field name '{location}' and crop '{crop}' from user query."
+            if crop_or_none
+            else f"Parsed field name '{location}' from user query."
+        ),
     }
+    if crop_or_none:
+        result["crop_type"] = crop_or_none
+    return result
 
 
 def infer_field_name_from_query(user_query: str) -> str:
-    fallback = fallback_query_analysis(user_query, "wheat")
+    fallback = fallback_query_analysis(user_query, None)
     field_name = fallback.get("field_name")
     return (field_name or "").strip()
 
 
 def build_llm_query_analysis(
     user_query: str,
-    fallback_crop: str,
+    fallback_crop: str | None,
 ) -> QueryAnalysisResult | None:
     if httpx is None:
         return None
@@ -1373,7 +1404,8 @@ def build_llm_query_analysis(
         f"Instruction: {AGENT_PROMPTS['query_analysis_agent'].prompt}\n"
         "Return valid JSON only with keys: field_name, need_geo, bbox, crop_type, analysis_report. "
         "If query has bbox, set need_geo=false, field_name=null, and bbox=[min_lon,min_lat,max_lon,max_lat]. "
-        "If query does not have coordinates, set need_geo=true and provide field_name."
+        "If query does not have coordinates, set need_geo=true and provide field_name. "
+        "If crop is not explicitly requested, set crop_type to null."
     )
     user_prompt = (
         f"user_query: {user_query}\n"
@@ -1417,7 +1449,7 @@ def build_llm_query_analysis(
     if not parsed:
         return None
 
-    crop_type = normalize_crop_type(str(parsed.get("crop_type") or "").strip().lower())
+    crop_type = normalize_crop_type(parsed.get("crop_type"))
     field_name_raw = parsed.get("field_name")
     field_name = None if field_name_raw is None else normalize_location_name(str(field_name_raw).strip())
     need_geo = parse_bool(parsed.get("need_geo", True), default=True)
@@ -1425,7 +1457,7 @@ def build_llm_query_analysis(
     analysis_report = str(parsed.get("analysis_report") or "").strip()
 
     if not crop_type:
-        crop_type = fallback_crop
+        crop_type = normalize_crop_type(infer_crop_type_from_query(user_query, fallback_crop))
     if not analysis_report:
         analysis_report = "Parsed query intent."
 
@@ -1438,29 +1470,33 @@ def build_llm_query_analysis(
                 bbox = bbox_from_center_lat_lon(central[0], central[1])
         if not bbox:
             return None
-        return {
+        result: QueryAnalysisResult = {
             "field_name": None,
             "need_geo": False,
             "bbox": bbox,
-            "crop_type": crop_type,
             "analysis_report": analysis_report,
         }
+        if crop_type:
+            result["crop_type"] = crop_type
+        return result
 
     if not field_name:
         field_name = infer_field_name_from_query(user_query)
     if not field_name:
         return None
-    return {
+    result = {
         "field_name": field_name,
         "need_geo": True,
-        "crop_type": crop_type,
         "analysis_report": analysis_report,
     }
+    if crop_type:
+        result["crop_type"] = crop_type
+    return result
 
 
 def query_analysis_node(state: AgriState) -> Dict[str, Any]:
     user_query = state.get("user_query", "")
-    fallback_crop = state.get("crop_type", "wheat")
+    fallback_crop = state.get("crop_type")
     run_mode = normalize_run_mode(state.get("run_mode", "chat"))
     llm_configured = bool(os.getenv("OPENAI_API_KEY"))
 
@@ -1472,13 +1508,13 @@ def query_analysis_node(state: AgriState) -> Dict[str, Any]:
         query_error = exception_to_error_code("query_analysis_llm", exc)
 
     if llm_result:
+        parsed_crop = normalize_crop_type(llm_result.get("crop_type"))
         routing_decision = infer_requested_api_nodes(
             user_query,
-            llm_result["crop_type"],
+            parsed_crop,
             run_mode,
         )
         result: Dict[str, Any] = {
-            "crop_type": llm_result["crop_type"],
             "query_analysis_report": llm_result["analysis_report"],
             "query_analysis_debug": "llm_query_analysis",
             "requested_api_nodes": routing_decision["requested_api_nodes"],
@@ -1486,6 +1522,8 @@ def query_analysis_node(state: AgriState) -> Dict[str, Any]:
             "api_router_source": routing_decision["api_router_source"],
             "api_router_reason": routing_decision["api_router_reason"],
         }
+        if parsed_crop:
+            result["crop_type"] = parsed_crop
         if llm_result.get("need_geo", True):
             result["need_geo"] = True
             result["field_name"] = llm_result.get("field_name")
@@ -1496,9 +1534,10 @@ def query_analysis_node(state: AgriState) -> Dict[str, Any]:
         return result
 
     fallback_result = fallback_query_analysis(user_query, fallback_crop)
+    parsed_crop = normalize_crop_type(fallback_result.get("crop_type"))
     routing_decision = infer_requested_api_nodes(
         user_query,
-        fallback_result["crop_type"],
+        parsed_crop,
         run_mode,
     )
     debug_reason = "fallback_query_analysis"
@@ -1508,7 +1547,6 @@ def query_analysis_node(state: AgriState) -> Dict[str, Any]:
         debug_reason = "fallback_query_analysis_llm_invalid_response"
 
     result: Dict[str, Any] = {
-        "crop_type": fallback_result["crop_type"],
         "query_analysis_report": fallback_result["analysis_report"],
         "query_analysis_debug": debug_reason,
         "requested_api_nodes": routing_decision["requested_api_nodes"],
@@ -1518,6 +1556,8 @@ def query_analysis_node(state: AgriState) -> Dict[str, Any]:
         # Fallback succeeded, so keep query-analysis status non-failing.
         "query_analysis_error": "",
     }
+    if parsed_crop:
+        result["crop_type"] = parsed_crop
     if fallback_result.get("need_geo", True):
         result["need_geo"] = True
         result["field_name"] = fallback_result.get("field_name")
@@ -1530,13 +1570,13 @@ def query_analysis_node(state: AgriState) -> Dict[str, Any]:
 
 def validation_node(state: AgriState) -> Dict[str, Any]:
     allowed_crops = {"wheat", "maize", "grape", "barley", "soy", "coffee", "sugar", "cotton"}
-    crop_type = normalize_crop_type(state.get("crop_type", "wheat"))
+    crop_type = normalize_crop_type(state.get("crop_type"))
     need_geo = bool(state.get("need_geo", True))
     field_name = (state.get("field_name") or "").strip()
     parsed_bbox = state.get("bbox") or []
 
     issues: List[str] = []
-    if crop_type not in allowed_crops:
+    if crop_type and crop_type not in allowed_crops:
         issues.append(f"unsupported_crop_type:{crop_type}")
     if need_geo:
         if len(field_name) < 3:
@@ -1546,8 +1586,7 @@ def validation_node(state: AgriState) -> Dict[str, Any]:
             issues.append("bbox_missing_or_invalid")
 
     if issues:
-        return {
-            "crop_type": crop_type,
+        response: Dict[str, Any] = {
             "query_validation_status": "needs_clarification",
             "needs_clarification": True,
             "clarification_message": (
@@ -1555,13 +1594,17 @@ def validation_node(state: AgriState) -> Dict[str, Any]:
                 f"Validation issues: {', '.join(issues)}."
             ),
         }
+        if crop_type:
+            response["crop_type"] = crop_type
+        return response
 
     response: Dict[str, Any] = {
-        "crop_type": crop_type,
         "need_geo": need_geo,
         "query_validation_status": "validated",
         "needs_clarification": False,
     }
+    if crop_type:
+        response["crop_type"] = crop_type
     if not need_geo:
         response["bbox"] = normalize_bbox(parsed_bbox)
     return response
@@ -1599,7 +1642,7 @@ def compose_orchestrator_facts(state: AgriState, final_action: str) -> str:
     forecast = state.get("weather_forecast", {})
     bio = state.get("bio_monitor", {})
     crop_health = state.get("crop_health_data", {})
-    market_crop = state.get("market_focus_crop", "wheat")
+    market_crop = state.get("market_focus_crop") or "n/a"
     market_stats = state.get("market_price_stats", {})
     yield_data = state.get("yield_analysis_data", {})
     market_data = state.get("market_overview_data", {})
@@ -1621,7 +1664,7 @@ def compose_orchestrator_facts(state: AgriState, final_action: str) -> str:
             f"Location: {state.get('location_name', 'n/a')} ({state.get('country_code', 'n/a')})",
             f"BBox: {state.get('bbox')}",
             f"Geocode debug: {state.get('geocode_debug', 'n/a')}",
-            f"Crop: {state.get('crop_type', 'n/a')}",
+            f"Crop: {state.get('crop_type') or 'not specified'}",
             f"Yield selected crop group: {crop_health.get('selected_crop_group', 'n/a')}",
             f"Stage: {state.get('phenology_stage', 'n/a')}",
             (
@@ -1636,7 +1679,7 @@ def compose_orchestrator_facts(state: AgriState, final_action: str) -> str:
             ),
             (
                 f"Weather: {forecast.get('source', 'n/a')} risk {state.get('weather_risk_score')} "
-                f"moisture {forecast.get('soil_moisture_pct')}%"
+                f"moisture {forecast.get('soil_moisture_pct')}% temperature {forecast.get('temperature_c')}C"
             ),
             f"Weather debug: {state.get('weather_debug', 'n/a')}",
             (
@@ -1692,7 +1735,7 @@ def crop_type_detected_in_bbox(state: AgriState) -> bool:
     crop_health = state.get("crop_health_data", {})
     yield_data = state.get("yield_analysis_data", {})
     selection_reason = str(yield_data.get("selection_reason") or "")
-    if selection_reason == "skipped_by_query_router":
+    if selection_reason in {"skipped_by_query_router", "no_crop_type_requested"}:
         return True
     status = str(crop_health.get("status") or "").strip().lower()
     label = str(crop_health.get("yield_index_label") or "").strip().lower()
@@ -1930,7 +1973,7 @@ def build_analysis_output(
     recommended_action: str | None,
     crop_in_bbox: bool,
 ) -> Dict[str, Any]:
-    crop_type = normalize_crop_type(state.get("crop_type", "wheat"))
+    crop_type = normalize_crop_type(state.get("crop_type"))
     crop_health = state.get("crop_health_data", {})
     market_stats = state.get("market_price_stats", {})
     weather = state.get("weather_forecast", {})
@@ -1945,7 +1988,7 @@ def build_analysis_output(
         "location": state.get("location_name"),
         "country_code": state.get("country_code"),
         "bbox": state.get("bbox"),
-        "requested_crop_type": crop_type,
+        "requested_crop_type": crop_type or None,
         "selected_crop_group": crop_health.get("selected_crop_group"),
         "crop_detection_status": "detected" if crop_in_bbox else "not_detected",
     }
@@ -1990,7 +2033,7 @@ def build_analysis_output(
 
     return {
         "crop_type_in_bbox": crop_in_bbox,
-        "crop_type": crop_type,
+        "crop_type": crop_type or None,
         "risk_score": risk_score_value,
         "Geospatial & Crop Context：": geospatial_context,
         "Yield & Vegetation Assessment：": yield_assessment,
@@ -2000,6 +2043,7 @@ def build_analysis_output(
             "trend_direction": market_stats.get("trend_direction"),
             "period_change_pct": market_stats.get("period_change_pct"),
             "weather_risk_score": state.get("weather_risk_score"),
+            "temperature_c": weather.get("temperature_c"),
             "soil_moisture_pct": weather.get("soil_moisture_pct"),
             "precipitation_mm": weather.get("precipitation_mm"),
             "heat_risk": weather.get("heat_risk"),
@@ -2043,7 +2087,7 @@ def build_chat_markdown_advisory(
         "## 🧭 User Intent",
         f"- Query: {state.get('user_query', '')}",
         f"- Orchestrator context: {AGENT_PROMPTS['orchestrator'].context}",
-        f"- Crop: {state.get('crop_type', 'unknown')}",
+        f"- Crop: {state.get('crop_type') or 'not specified'}",
         f"- Location: {state.get('location_name', 'unknown')} ({state.get('country_code', 'n/a')})",
         f"- BBox: {state.get('bbox')}",
         f"- Selected APIs: {selected_apis}",
@@ -2075,7 +2119,7 @@ def build_chat_markdown_advisory(
             [
                 "",
                 "## 💹 Market Assessment",
-                f"- Market crop: {state.get('market_focus_crop', 'n/a')}",
+                f"- Market crop: {state.get('market_focus_crop') or 'not specified'}",
                 f"- Latest price: {market_stats.get('latest_price')}",
                 f"- Trend: {market_stats.get('trend_direction')} ({market_stats.get('period_change_pct')}%)",
             ]
@@ -2087,6 +2131,7 @@ def build_chat_markdown_advisory(
                 "",
                 "## ☁️ Weather Assessment",
                 f"- Weather risk: {state.get('weather_risk_score')}",
+                f"- Temperature: {weather.get('temperature_c')}°C",
                 f"- Moisture: {weather.get('soil_moisture_pct')}% | Precipitation: {weather.get('precipitation_mm')} mm",
                 f"- Heat risk: {weather.get('heat_risk')} | Flood risk: {weather.get('flood_risk')}",
             ]
@@ -2514,7 +2559,7 @@ def build_crop_health_from_yield_payload(
 
 
 def yield_analysis_node(state: AgriState) -> Dict[str, Any]:
-    crop_type = normalize_crop_type(state.get("crop_type", "wheat"))
+    crop_type = normalize_crop_type(state.get("crop_type"))
     if not should_run_api_node(state, "yield_analysis_agent"):
         selected_group = map_crop_type_to_yield_group(crop_type)
         return {
@@ -2543,6 +2588,35 @@ def yield_analysis_node(state: AgriState) -> Dict[str, Any]:
                 "summary": "Yield analysis skipped because it was not requested in chat mode.",
             },
             "yield_analysis_debug": "skipped_by_query_router",
+            "yield_analysis_error": "",
+        }
+    if not crop_type:
+        return {
+            "crop_health_data": {
+                "ndvi": 0.0,
+                "leaf_area_index": 0.0,
+                "status": "Crop type not specified",
+                "selected_crop_group": "unspecified",
+                "selected_crop_label": "Unspecified",
+                "yield_index": 0.0,
+                "yield_index_label": "No crop type requested",
+                "predicted_yield_t_ha": 0.0,
+                "target_year": datetime.now().year,
+                "confidence": 0.0,
+                "anomaly_vs_5yr_pct": 0.0,
+                "estimated_yield_delta_pct": 0.0,
+                "satellite_history_signal": "unknown",
+                "latest_scene_date": "",
+                "cloud_cover_pct": 0.0,
+                "cropland_coverage_pct": 0.0,
+                "segmented_area_ha": 0.0,
+                "source": f"{API_CONFIG.yield_analysis} (crop type unspecified)",
+            },
+            "yield_analysis_data": {
+                "selection_reason": "no_crop_type_requested",
+                "summary": "Yield analysis skipped because crop type was not specified.",
+            },
+            "yield_analysis_debug": "no_crop_type_requested",
             "yield_analysis_error": "",
         }
 
@@ -2674,7 +2748,7 @@ def select_crop_from_market_prices(prices: Dict[str, Any], crop_type: str) -> tu
 
 
 def market_overview_node(state: AgriState) -> Dict[str, Any]:
-    crop_type = normalize_crop_type(state.get("crop_type", "wheat"))
+    crop_type = normalize_crop_type(state.get("crop_type"))
     if not should_run_api_node(state, "market_overview_agent"):
         return {
             "market_focus_crop": map_crop_type_to_market_crop(crop_type),
@@ -2685,6 +2759,18 @@ def market_overview_node(state: AgriState) -> Dict[str, Any]:
                 "summary": "Market overview skipped because it was not requested in chat mode.",
             },
             "market_overview_debug": "skipped_by_query_router",
+            "market_overview_error": "",
+        }
+    if not crop_type:
+        return {
+            "market_focus_crop": None,
+            "market_price_stats": {},
+            "market_overview_data": {
+                "selected_crop": None,
+                "selection_reason": "no_crop_type_requested",
+                "summary": "Market overview requires a crop type (e.g., wheat, maize, grape).",
+            },
+            "market_overview_debug": "no_crop_type_requested",
             "market_overview_error": "",
         }
 
@@ -2745,7 +2831,7 @@ def market_overview_node(state: AgriState) -> Dict[str, Any]:
 
 
 def crop_report_node(state: AgriState) -> Dict[str, Any]:
-    crop_type = normalize_crop_type(state.get("crop_type", "wheat"))
+    crop_type = normalize_crop_type(state.get("crop_type"))
     if not should_run_api_node(state, "crop_report_agent"):
         return {
             "crop_report_data": {
@@ -2871,6 +2957,7 @@ def climate_node(state: AgriState) -> Dict[str, Any]:
             "weather_forecast": {
                 "days": 0,
                 "source": f"{API_CONFIG.weather} (skipped)",
+                "temperature_c": 0.0,
                 "soil_moisture_pct": 0.0,
                 "precipitation_mm": 0.0,
                 "flood_risk": 0.0,
@@ -2901,10 +2988,11 @@ def climate_node(state: AgriState) -> Dict[str, Any]:
             "weather_error": weather_error,
         }
 
-    crop = state.get("crop_type", "wheat").lower()
+    crop = normalize_crop_type(state.get("crop_type"))
     lat_bias = (state["bbox"][1] - 41.0) * 0.2
     base_moisture = 18.5 if crop in {"wheat", "maize"} else 23.0
     soil_moisture = round(max(7.0, base_moisture - lat_bias), 1)
+    temperature_c = round(18.0 - ((state["bbox"][1] - 44.0) * 0.35), 1)
     precipitation = round(max(2.0, 26.0 - (soil_moisture * 0.7)), 1)
     flood_risk = round(clamp(0.18 + (precipitation * 0.01)), 2)
     heat_risk = round(clamp(0.22 + ((20.0 - soil_moisture) * 0.03)), 2)
@@ -2914,6 +3002,7 @@ def climate_node(state: AgriState) -> Dict[str, Any]:
         "weather_forecast": {
             "days": 14,
             "source": API_CONFIG.weather,
+            "temperature_c": temperature_c,
             "soil_moisture_pct": soil_moisture,
             "precipitation_mm": precipitation,
             "flood_risk": flood_risk,
@@ -3289,7 +3378,7 @@ def main() -> None:
     print_architecture_summary(mode)
     try:
         state = run_agri_mind(
-            user_query="Hello, what is your capacity? what can you do?",
+            user_query="Hello, assess maize at 4.67, 44.71, 4.97, 45.01?",
             run_mode=mode,
         )
     except RuntimeError as exc:
