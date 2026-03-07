@@ -21,6 +21,7 @@ type SatelliteAutofillPayload = {
   bbox: string;
   bboxList: string[];
   dateRange: string;
+  cropType?: string;
 };
 
 interface ChatBubbleProps {
@@ -161,6 +162,7 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
             bbox?: string;
             bbox_list?: string[];
             date_range?: string;
+            crop_type?: string;
           };
           if (evt.type === 'delta' && evt.delta) {
             receivedDelta = true;
@@ -176,6 +178,7 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
                 bbox,
                 bboxList,
                 dateRange,
+                cropType: evt.crop_type,
               });
             }
           } else if (evt.type === 'done') {

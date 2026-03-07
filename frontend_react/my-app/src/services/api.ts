@@ -287,7 +287,7 @@ export interface AnalysisReport {
 
 export interface AnalysisReportRequest {
   bbox: string;
-  crop?: Crop;
+  crop?: string;
   date?: string;
   resolution?: number;
 }
