@@ -66,6 +66,7 @@ function App() {
   const [analysisData, setAnalysisData] = useState<CropAnalysisResponse | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [analysisAutoRunSignal, setAnalysisAutoRunSignal] = useState(0);
   const [satelliteViews, setSatelliteViews] = useState<Record<SatelliteLayer, SatelliteViewState>>(
     createInitialSatelliteViews(),
   );
@@ -196,10 +197,13 @@ function App() {
       />
 
       <CropAnalysisSection data={analysisData} isLoading={analysisLoading} error={analysisError} />
-      <RiskAnalysisPanel bbox={bbox} />
+      <RiskAnalysisPanel bbox={bbox} autoRunSignal={analysisAutoRunSignal} />
       <ChatBubble
         onAutofillSatellite={({ bbox: nextBbox, dateRange }) => {
-          void loadSatelliteViewsBy(nextBbox, dateRange);
+          void (async () => {
+            await loadSatelliteViewsBy(nextBbox, dateRange);
+            setAnalysisAutoRunSignal((previous) => previous + 1);
+          })();
         }}
       />
     </div>

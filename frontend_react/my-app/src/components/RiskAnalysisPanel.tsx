@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { fetchAnalysisReport, type AnalysisReport } from '../services/api';
 
 /* ── colour helpers (1-5 scale) ───────────────────── */
@@ -92,9 +92,10 @@ const DETAIL_KEY_ORDER = [
 
 interface RiskAnalysisPanelProps {
   bbox?: string;
+  autoRunSignal?: number;
 }
 
-export function RiskAnalysisPanel({ bbox = '' }: RiskAnalysisPanelProps) {
+export function RiskAnalysisPanel({ bbox = '', autoRunSignal = 0 }: RiskAnalysisPanelProps) {
   const [report, setReport] = useState<AnalysisReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -113,6 +114,13 @@ export function RiskAnalysisPanel({ bbox = '' }: RiskAnalysisPanelProps) {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (!autoRunSignal) {
+      return;
+    }
+    void runAnalysis();
+  }, [autoRunSignal]);
 
   const score = report?.risk_score ?? 0;
   const level = report ? riskLabel(score) : null;
