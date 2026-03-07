@@ -1,14 +1,14 @@
 """
-Crop-level NDVI analysis — per-crop yield proxy from colour-reverse-lookup.
+Crop-level NDVI analysis — per-crop yield proxy from CLMS palette-index classification.
 
 Pipeline:
-  1. Fetch CLMS WMS Crop Types PNG → decode RGB to crop class via colour table
+  1. Fetch CLMS WMS Crop Types GeoTIFF → read palette indices → map to class codes
   2. Fetch Sentinel-2 bands → compute NDVI matrix at matching bbox / resolution
   3. Mask NDVI per crop class → per-crop NDVI statistics
   4. Produce a relative yield proxy per crop
 
-The colour → class mapping comes from the official CLMS HRL Croplands
-Crop Types 2021 legend (CTY_S2021).
+The palette-index → class-code mapping was verified empirically against CLMS
+GetFeatureInfo responses across multiple French regions (2026-03).
 
 Reference legend (HRL CPL, 10 m):
   https://land.copernicus.eu/en/products/high-resolution-layer-crop-type
@@ -34,65 +34,97 @@ from config import (
     USE_BUNDLED_DATA,
 )
 
-# ─── CLMS Crop Types 2021 — colour legend ────────────────────────
-# Official RGB values from the CLMS layer style.
-# Mapping: (R, G, B) → (class_code, label, simplified_group)
+# ─── CLMS Crop Types 2021 — palette-index classification ─────────
+# The CLMS GeoServer (HRL_CPL:CTY_S2021) returns GeoTIFF images in
+# palette mode (PIL mode "P", uint8, values 0-19).  Each palette index
+# maps deterministically to a CLMS class code.
 #
-# The simplified_group maps fine-grained CLMS classes to the 3 crop
-# categories supported in our CROP_CONFIG (wheat, maize, grape).
-# Pixels that don't match any known colour are classified as "other".
-#
-# NOTE: colour matching uses Euclidean distance with a tolerance to
-# handle JPEG / antialiasing artefacts in the WMS PNG response.
+# This mapping was verified via WMS GetFeatureInfo majority-voting across
+# 6 French regions (Alsace, Rhône, Beauce, Languedoc, Bordeaux, Toulouse)
+# and confirmed at high resolution on 4 targeted bboxes (2026-03).
 
-_CLMS_COLOUR_TABLE: list[tuple[tuple[int, int, int], int, str, str]] = [
-    # (R, G, B), class_code, label, simplified_group
-    # --- Cereals / arable ---
-    ((255, 255,   0), 211, "Common wheat",            "wheat"),
-    ((255, 255, 100), 212, "Durum wheat",             "wheat"),
-    ((200, 200,   0), 213, "Barley",                  "other_cereal"),
-    ((240, 200,   0), 214, "Rye",                     "other_cereal"),
-    ((230, 210,  60), 215, "Oats",                    "other_cereal"),
-    ((255, 180,   0), 216, "Maize",                   "maize"),
-    ((210, 180,  60), 217, "Rice",                    "other_cereal"),
-    ((200, 130,   0), 218, "Triticale",               "other_cereal"),
-    ((180, 150,   0), 219, "Other cereals",           "other_cereal"),
-    # --- Industrial / oil / protein crops ---
-    ((255, 230, 130), 221, "Potatoes",                "other"),
-    ((205, 245,  80), 222, "Sugar beet",              "other"),
-    ((240, 210, 120), 223, "Sunflower",               "other"),
-    ((255, 190, 130), 224, "Rapeseed / canola",       "other"),
-    ((180, 220,  90), 230, "Soya",                    "other"),
-    ((130, 160,  70), 231, "Dry pulses",              "other"),
-    # --- Fodder / grassland under rotation ---
-    ((170, 240, 100), 241, "Temporary grassland",     "grassland"),
-    ((150, 200,  80), 242, "Permanent grassland",     "grassland"),
-    ((100, 170,  70), 243, "Clover / legume fodder",  "grassland"),
-    ((120, 200, 100), 244, "Maize (silage/fodder)",   "maize"),
-    # --- Fruits / vines ---
-    ((160,  40, 170), 250, "Vineyards",               "grape"),
-    ((180,  60, 200), 251, "Orchards",                "other_fruit"),
-    ((200, 100, 220), 252, "Olive groves",            "other_fruit"),
-    # --- Vegetables / other ---
-    ((220, 170, 150), 260, "Vegetables",              "other"),
-    ((180, 140, 120), 261, "Flowers / nurseries",     "other"),
-    # --- Non-crop (may appear) ---
-    ((  0,   0,   0),   0, "No data / background",    "nodata"),
-    ((255, 255, 255), 254, "Non-cropland / built-up", "nodata"),
-    ((200, 200, 200), 253, "Fallow",                  "other"),
-]
+# palette index (uint8 0-19) → official CLMS class code
+PALETTE_INDEX_TO_CLASS_CODE: dict[int, int] = {
+    0:     0,  # No data / background
+    1:  1110,  # Common wheat
+    2:  1120,  # Barley
+    3:  1130,  # Grain maize
+    4:  1140,  # Rice
+    5:  1150,  # Other cereals
+    6:  1210,  # Potatoes
+    7:  1220,  # Sugar beet
+    8:  1310,  # Temporary grassland
+    9:  1320,  # Permanent grassland
+    10: 1410,  # Vegetables
+    11: 1420,  # Flowers / nurseries
+    12: 1430,  # Other non-permanent industrial crops
+    13: 1440,  # Maize silage / fodder
+    14: 2100,  # Vineyards
+    15: 2200,  # Orchards
+    16: 2310,  # Mixed permanent crops
+    17: 2320,  # Olive groves
+    18: 3100,  # Fallow
+    19: 3200,  # Other cropland
+}
 
-# Pre-compute numpy arrays for fast vectorised distance lookup
-_CT_RGB = np.array([c[0] for c in _CLMS_COLOUR_TABLE], dtype=np.float32)     # (N, 3)
-_CT_CODES = np.array([c[1] for c in _CLMS_COLOUR_TABLE], dtype=np.int32)     # (N,)
-_CT_LABELS = [c[2] for c in _CLMS_COLOUR_TABLE]
-_CT_GROUPS = [c[3] for c in _CLMS_COLOUR_TABLE]
+# CLMS class code → simplified crop group
+CLASS_CODE_TO_GROUP: dict[int, str] = {
+    0:    "nodata",
+    1110: "wheat",          # Common wheat
+    1120: "other_cereal",   # Barley
+    1130: "maize",          # Grain maize
+    1140: "other_cereal",   # Rice
+    1150: "other_cereal",   # Other cereals
+    1210: "other",          # Potatoes
+    1220: "other",          # Sugar beet
+    1310: "grassland",      # Temporary grassland
+    1320: "grassland",      # Permanent grassland
+    1410: "other",          # Vegetables
+    1420: "other",          # Flowers / nurseries
+    1430: "other",          # Other non-permanent industrial
+    1440: "maize",          # Maize silage / fodder
+    2100: "grape",          # Vineyards
+    2200: "other_fruit",    # Orchards
+    2310: "other_fruit",    # Mixed permanent crops
+    2320: "other_fruit",    # Olive groves
+    3100: "other",          # Fallow
+    3200: "other",          # Other cropland
+}
+
+# CLMS class code → human-readable label
+CLASS_CODE_TO_LABEL: dict[int, str] = {
+    0:    "No data",
+    1110: "Common wheat",
+    1120: "Barley",
+    1130: "Grain maize",
+    1140: "Rice",
+    1150: "Other cereals",
+    1210: "Potatoes",
+    1220: "Sugar beet",
+    1310: "Temporary grassland",
+    1320: "Permanent grassland",
+    1410: "Vegetables",
+    1420: "Flowers / nurseries",
+    1430: "Other non-permanent industrial",
+    1440: "Maize silage / fodder",
+    2100: "Vineyards",
+    2200: "Orchards",
+    2310: "Mixed permanent crops",
+    2320: "Olive groves",
+    3100: "Fallow",
+    3200: "Other cropland",
+}
+
+# Pre-build: group → list of labels (for display in results)
+_GROUP_LABELS: dict[str, list[str]] = {}
+for _code, _group in CLASS_CODE_TO_GROUP.items():
+    if _group != "nodata":
+        _GROUP_LABELS.setdefault(_group, []).append(CLASS_CODE_TO_LABEL[_code])
+for _k in _GROUP_LABELS:
+    _GROUP_LABELS[_k] = sorted(set(_GROUP_LABELS[_k]))
 
 # Groups we report on (mapped to CROP_CONFIG names)
 REPORTABLE_GROUPS = {"wheat", "maize", "grape", "other_cereal", "grassland", "other_fruit", "other"}
-
-# Colour-distance tolerance (Euclidean in 0-255 RGB space)
-_COLOUR_TOLERANCE = 40.0
 
 # Cache full analysis results to avoid recomputing identical bbox/date/resolution
 _analysis_cache_lock = threading.Lock()
@@ -125,41 +157,41 @@ def _analysis_cache_set(key: tuple, value: dict[str, Any]):
             _analysis_cache.popitem(last=False)
 
 
-# ─── Colour → class classification ───────────────────────────────
+# ─── Palette-index → class classification ────────────────────────
 
-def classify_pixels(rgb_array: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+# Build lookup array: palette_index (0-255) → class_code
+_PALETTE_LUT = np.zeros(256, dtype=np.int32)
+for _pi, _cc in PALETTE_INDEX_TO_CLASS_CODE.items():
+    _PALETTE_LUT[_pi] = _cc
+
+# Build lookup array: palette_index (0-255) → group string
+_PALETTE_GROUP_LUT: list[str] = ["nodata"] * 256
+for _pi, _cc in PALETTE_INDEX_TO_CLASS_CODE.items():
+    _PALETTE_GROUP_LUT[_pi] = CLASS_CODE_TO_GROUP.get(_cc, "nodata")
+
+
+def classify_pixels(palette_array: np.ndarray) -> tuple[np.ndarray, list[str]]:
     """
-    Classify an (H, W, 3) uint8 RGB array into crop class codes and group indices.
+    Classify an (H, W) uint8 palette-index array into crop class codes and groups.
+
+    Parameters
+    ----------
+    palette_array : (H, W) uint8 — raw palette indices from CLMS GeoTIFF
 
     Returns
     -------
-    class_codes : (H, W) int32 — CLMS class codes (0 for unmatched)
-    group_names : list[str] — per-pixel group name (flat, same length as H*W)
+    class_codes : (H, W) int32 — CLMS class codes (0 for no-data)
+    group_names : list[str] — per-pixel group name (flat, length H*W)
     """
-    h, w = rgb_array.shape[:2]
-    flat = rgb_array.reshape(-1, 3).astype(np.float32)  # (N_pixels, 3)
-
-    # Euclidean distance from each pixel to each legend colour
-    # Using broadcasting: flat[:, None, :] - _CT_RGB[None, :, :]  →  (N_pixels, N_classes, 3)
-    diff = flat[:, None, :] - _CT_RGB[None, :, :]
-    dists = np.sqrt((diff ** 2).sum(axis=2))             # (N_pixels, N_classes)
-
-    best_idx = dists.argmin(axis=1)                       # (N_pixels,)
-    best_dist = dists[np.arange(len(flat)), best_idx]     # (N_pixels,)
-
-    # Apply tolerance: pixels too far from any legend colour → nodata
-    codes = _CT_CODES[best_idx].copy()
-    codes[best_dist > _COLOUR_TOLERANCE] = 0
-
-    groups = [_CT_GROUPS[i] if best_dist[j] <= _COLOUR_TOLERANCE else "nodata"
-              for j, i in enumerate(best_idx)]
-
-    return codes.reshape(h, w), groups
+    class_codes = _PALETTE_LUT[palette_array]  # vectorised integer lookup
+    flat = palette_array.ravel()
+    groups = [_PALETTE_GROUP_LUT[int(v)] for v in flat]
+    return class_codes, groups
 
 
-# ─── Fetch CLMS PNG as raw RGB array ─────────────────────────────
+# ─── Fetch CLMS GeoTIFF as palette-index array ───────────────────
 
-def fetch_clms_rgb(
+def fetch_clms_crop_types(
     bbox: list[float],
     width: int,
     height: int,
@@ -167,7 +199,12 @@ def fetch_clms_rgb(
     timeout: int = 60,
 ) -> np.ndarray | None:
     """
-    Fetch CLMS WMS Crop Types as an (H, W, 3) uint8 RGB array.
+    Fetch CLMS WMS Crop Types as an (H, W) uint8 palette-index array.
+
+    The GeoTIFF from CLMS GeoServer is palette-indexed (PIL mode 'P').
+    Each pixel value (0-19) maps to a CLMS crop class via
+    PALETTE_INDEX_TO_CLASS_CODE.
+
     Returns None on failure.
     """
     layer = CLMS_LAYER_TEMPLATE.format(year=year)
@@ -184,17 +221,17 @@ def fetch_clms_rgb(
         "bbox": bbox_wms,
         "width": str(width),
         "height": str(height),
-        "format": "image/png",
-        "transparent": "false",  # solid background for colour matching
+        "format": "image/geotiff",
     }
 
     try:
         resp = requests.get(CLMS_WMS_URL, params=params, timeout=timeout)
         resp.raise_for_status()
-        img = Image.open(io.BytesIO(resp.content)).convert("RGB")
-        return np.asarray(img)
+        img = Image.open(io.BytesIO(resp.content))
+        # Keep raw palette indices — do NOT convert to RGB
+        return np.asarray(img, dtype=np.uint8)
     except Exception as exc:
-        print(f"[crop_ndvi] CLMS WMS fetch failed: {exc}")
+        print(f"[crop_ndvi] CLMS WMS GeoTIFF fetch failed: {exc}")
         return None
 
 
@@ -621,11 +658,11 @@ def analyze_crop_ndvi(
 
     # ── Try live data ────────────────────────────────────────────
     if not USE_BUNDLED_DATA:
-        clms_rgb = fetch_clms_rgb(bbox, resolution, resolution)
-        if clms_rgb is not None:
+        clms_idx = fetch_clms_crop_types(bbox, resolution, resolution)
+        if clms_idx is not None:
             ndvi = _compute_ndvi_matrix(bbox, date_range, resolution, resolution)
             if ndvi is not None:
-                result = _build_analysis(bbox, clms_rgb, ndvi, date_range)
+                result = _build_analysis(bbox, clms_idx, ndvi, date_range)
                 _analysis_cache_set(cache_key, result)
                 return result
 
@@ -637,11 +674,11 @@ def analyze_crop_ndvi(
 
     # ── Try live even in bundled mode (CLMS is usually reliable) ──
     try:
-        clms_rgb = fetch_clms_rgb(bbox, resolution, resolution)
-        if clms_rgb is not None:
+        clms_idx = fetch_clms_crop_types(bbox, resolution, resolution)
+        if clms_idx is not None:
             ndvi = _compute_ndvi_matrix(bbox, date_range, resolution, resolution)
             if ndvi is not None:
-                result = _build_analysis(bbox, clms_rgb, ndvi, date_range)
+                result = _build_analysis(bbox, clms_idx, ndvi, date_range)
                 _analysis_cache_set(cache_key, result)
                 return result
     except Exception as exc:
@@ -663,13 +700,13 @@ def analyze_crop_ndvi(
 
 def _build_analysis(
     bbox: list[float],
-    clms_rgb: np.ndarray,
+    clms_idx: np.ndarray,
     ndvi: np.ndarray,
     date_range: str,
 ) -> dict[str, Any]:
     """Assemble per-crop NDVI statistics from classified CLMS pixels + NDVI grid."""
-    h, w = clms_rgb.shape[:2]
-    class_codes, group_list = classify_pixels(clms_rgb)
+    h, w = clms_idx.shape[:2]
+    class_codes, group_list = classify_pixels(clms_idx)
     group_arr = np.array(group_list).reshape(h, w)
 
     total_valid = int((class_codes != 0).sum())
@@ -678,38 +715,41 @@ def _build_analysis(
     for group in REPORTABLE_GROUPS:
         mask = group_arr == group
         count = int(mask.sum())
-        if count == 0:
-            continue
+        # NOTE: filtering disabled — always include every reportable group
+        # if count == 0:
+        #     continue
 
-        ndvi_masked = ndvi[mask]
-        ndvi_valid = ndvi_masked[np.isfinite(ndvi_masked)]
+        ndvi_masked = ndvi[mask] if count > 0 else np.array([], dtype=np.float32)
+        ndvi_valid = ndvi_masked[np.isfinite(ndvi_masked)] if len(ndvi_masked) > 0 else np.array([], dtype=np.float32)
 
-        if len(ndvi_valid) == 0:
-            continue
+        # if len(ndvi_valid) == 0:
+        #     continue
 
-        mean_val = float(np.mean(ndvi_valid))
+        has_ndvi = len(ndvi_valid) > 0
+        mean_val = float(np.mean(ndvi_valid)) if has_ndvi else None
 
         # ── Phenology-aware yield index ──────────────────────────
-        yield_idx, yield_label = _yield_index_for_crop(group, mean_val, date_range)
+        if mean_val is not None:
+            yield_idx, yield_label = _yield_index_for_crop(group, mean_val, date_range)
+        else:
+            yield_idx, yield_label = None, "No pixels detected"
 
         # Also store the monthly baseline used so agent can reason about it
         monthly_baseline = round(_get_monthly_baseline(group, date_range), 3)
         profile = _CROP_NDVI_PROFILES.get(group, {})
 
         # Find the label(s) for this group
-        labels = sorted(set(
-            ct[2] for ct in _CLMS_COLOUR_TABLE if ct[3] == group
-        ))
+        labels = _GROUP_LABELS.get(group, [group.replace("_", " ").title()])
 
         crops_result[group] = {
             "label": ", ".join(labels[:3]) + ("…" if len(labels) > 3 else ""),
             "pixel_count": count,
             "area_pct": round(count / max(total_valid, 1) * 100, 1),
-            "ndvi_mean": round(mean_val, 3),
-            "ndvi_std": round(float(np.std(ndvi_valid)), 3),
-            "ndvi_median": round(float(np.median(ndvi_valid)), 3),
-            "ndvi_p25": round(float(np.percentile(ndvi_valid, 25)), 3),
-            "ndvi_p75": round(float(np.percentile(ndvi_valid, 75)), 3),
+            "ndvi_mean": round(mean_val, 3) if mean_val is not None else None,
+            "ndvi_std": round(float(np.std(ndvi_valid)), 3) if has_ndvi else None,
+            "ndvi_median": round(float(np.median(ndvi_valid)), 3) if has_ndvi else None,
+            "ndvi_p25": round(float(np.percentile(ndvi_valid, 25)), 3) if has_ndvi else None,
+            "ndvi_p75": round(float(np.percentile(ndvi_valid, 75)), 3) if has_ndvi else None,
             "yield_index": yield_idx,
             "yield_index_label": yield_label,
             "ndvi_baseline_used": monthly_baseline,
