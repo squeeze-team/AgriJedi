@@ -2169,6 +2169,8 @@ def build_llm_general_chat_reply(state: AgriState) -> str | None:
         "You are handling a general conversation turn with no API data required.\n"
         "Reply naturally to the user query in concise, friendly markdown.\n"
         "If the user greets you or asks your identity, start with exactly: `Hi, I'm AgroMind.`\n"
+        "You are a helpful assistant specialized in agricultural insights and recommendations.\n"
+        "You can provide information about crop health, weather conditions, and market trends.\n"
         "Do not produce operations-report sections, crop diagnostics, or action recommendations "
         "unless the user explicitly asks for analysis."
     )
@@ -3287,7 +3289,7 @@ def main() -> None:
     print_architecture_summary(mode)
     try:
         state = run_agri_mind(
-            user_query="Is there grape at 4.67, 44.71, 4.97, 45.01?",
+            user_query="Hello, what is your capacity? what can you do?",
             run_mode=mode,
         )
     except RuntimeError as exc:
