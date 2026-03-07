@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import type { AnalysisReport } from '../services/api';
-import mockReport from '../mocks/analysis-report.json';
+import { fetchAnalysisReport, type AnalysisReport } from '../services/api';
 
 /* ── colour helpers (1-5 scale) ───────────────────── */
 
@@ -98,14 +97,21 @@ interface RiskAnalysisPanelProps {
 export function RiskAnalysisPanel({ bbox = '' }: RiskAnalysisPanelProps) {
   const [report, setReport] = useState<AnalysisReport | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  /** Load mock data (swap for real fetchAnalysisReport later). */
   async function runAnalysis() {
     setLoading(true);
-    // Simulate network delay so the skeleton is visible
-    await new Promise((r) => setTimeout(r, 800));
-    setReport(mockReport as unknown as AnalysisReport);
-    setLoading(false);
+    setError(null);
+    try {
+      const next = await fetchAnalysisReport(bbox);
+      setReport(next);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown analysis error';
+      setError(message);
+      setReport(null);
+    } finally {
+      setLoading(false);
+    }
   }
 
   const score = report?.risk_score ?? 0;
@@ -160,6 +166,12 @@ export function RiskAnalysisPanel({ bbox = '' }: RiskAnalysisPanelProps) {
         <div className="cyber-note p-5 text-sm text-slate-300">
           Click <strong>"Run Analysis"</strong> to generate an AI-powered risk report for the selected region.
           <span className="ml-1 text-xs text-slate-400">(bbox: {bbox || 'none'})</span>
+        </div>
+      )}
+
+      {error && (
+        <div className="mb-3 rounded-lg border border-rose-400/40 bg-rose-500/10 px-4 py-2 text-sm text-rose-200">
+          Analysis failed: {error}
         </div>
       )}
 

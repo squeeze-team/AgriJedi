@@ -285,11 +285,26 @@ export interface AnalysisReport {
   [key: string]: string | number | boolean | number[] | MarketWeatherRisk | null;
 }
 
-export async function fetchAnalysisReport(bbox: string): Promise<AnalysisReport> {
+export interface AnalysisReportRequest {
+  bbox: string;
+  crop?: Crop;
+  date?: string;
+  resolution?: number;
+}
+
+export async function fetchAnalysisReport(
+  bbox: string,
+  options?: Omit<AnalysisReportRequest, 'bbox'>,
+): Promise<AnalysisReport> {
   const response = await fetch(`${API_BASE}/analysis/report`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ bbox }),
+    body: JSON.stringify({
+      bbox,
+      crop: options?.crop,
+      date: options?.date,
+      resolution: options?.resolution,
+    }),
   });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
