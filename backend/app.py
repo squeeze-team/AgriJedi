@@ -26,14 +26,17 @@ Agent-oriented (POST JSON body, single-call):
 import pandas as pd
 import json
 import asyncio
+import os
 from typing import Any, Literal
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse, Response
+from fastapi.responses import StreamingResponse, JSONResponse, Response, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 try:
     from dotenv import load_dotenv
@@ -71,6 +74,12 @@ app = FastAPI(
     description="France wheat yield & price prediction framework",
 )
 
+_APP_DIR = Path(__file__).resolve().parent
+_FRONTEND_DIST_DIR = Path(
+    os.getenv("FRONTEND_DIST_DIR", str(_APP_DIR / "frontend_dist"))
+).resolve()
+_FRONTEND_INDEX_FILE = _FRONTEND_DIST_DIR / "index.html"
+
 # Allow the frontend to call the API from any origin (hackathon-friendly)
 app.add_middleware(
     CORSMiddleware,
@@ -78,6 +87,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_FRONTEND_ASSETS_DIR = _FRONTEND_DIST_DIR / "assets"
+if _FRONTEND_ASSETS_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(_FRONTEND_ASSETS_DIR)), name="frontend-assets")
 
 
 class ChatHistoryItem(BaseModel):
@@ -240,6 +253,13 @@ def _normalize_analysis_report(raw_payload: dict[str, Any], requested_bbox: list
 # ─── Health check ────────────────────────────────────────────────
 @app.get("/")
 def root():
+    if _FRONTEND_INDEX_FILE.is_file():
+        return FileResponse(_FRONTEND_INDEX_FILE)
+    return {"status": "ok", "service": "AgriIntel Demo"}
+
+
+@app.get("/health")
+def health():
     return {"status": "ok", "service": "AgriIntel Demo"}
 
 
@@ -1125,6 +1145,22 @@ def agent_crop_report(req: CropReportRequest):
         "format": "markdown",
         "report": content,
     })
+
+
+@app.get("/{full_path:path}")
+def frontend_spa_fallback(full_path: str):
+    if not _FRONTEND_INDEX_FILE.is_file():
+        raise HTTPException(404, "Not Found")
+
+    requested_path = (_FRONTEND_DIST_DIR / full_path).resolve()
+    if (
+        full_path
+        and str(requested_path).startswith(str(_FRONTEND_DIST_DIR))
+        and requested_path.is_file()
+    ):
+        return FileResponse(requested_path)
+
+    return FileResponse(_FRONTEND_INDEX_FILE)
 
 
 # ─── Run ─────────────────────────────────────────────────────────
