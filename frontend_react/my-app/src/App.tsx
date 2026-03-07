@@ -5,6 +5,7 @@ import { PriceChartPanel } from './components/PriceChartPanel';
 import { CropAnalysisSection } from './components/CropAnalysisSection';
 import { ChatBubble } from './components/ChatBubble';
 import type { CropLegendItem } from './components/CropLegend';
+import { RiskAnalysisPanel } from './components/RiskAnalysisPanel';
 import { SatelliteSection } from './components/SatelliteSection';
 import { WeatherChartPanel } from './components/WeatherChartPanel';
 import {
@@ -186,6 +187,7 @@ function App() {
       />
 
       <CropAnalysisSection data={analysisData} isLoading={analysisLoading} error={analysisError} />
+      <RiskAnalysisPanel bbox={bbox} />
       <ChatBubble
         onAutofillSatellite={({ bbox: nextBbox, dateRange }) => {
           void loadSatelliteViewsBy(nextBbox, dateRange);
