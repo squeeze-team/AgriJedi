@@ -315,7 +315,7 @@ export async function fetchAnalysisReport(
   return (await response.json()) as AnalysisReport;
 }
 
-export interface GdacsFranceEvent {
+export interface GdacsEuropeEvent {
   id: string;
   title: string;
   hazard: string;
@@ -326,18 +326,18 @@ export interface GdacsFranceEvent {
   url: string;
 }
 
-export interface GdacsFranceEventsResponse {
+export interface GdacsEuropeEventsResponse {
   feed_ok: boolean;
   all_good: boolean;
-  country: string;
+  region: string;
   lookback_days: number;
   checked_at: string;
-  events: GdacsFranceEvent[];
+  events: GdacsEuropeEvent[];
   message: string;
 }
 
-export async function fetchFranceGdacsEvents(days = 14, limit = 8): Promise<GdacsFranceEventsResponse> {
-  const response = await fetch(`${API_BASE}/events/gdacs/france`, {
+export async function fetchEuropeGdacsEvents(days = 14, limit = 8): Promise<GdacsEuropeEventsResponse> {
+  const response = await fetch(`${API_BASE}/events/gdacs/europe`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ days, limit }),
@@ -345,7 +345,7 @@ export async function fetchFranceGdacsEvents(days = 14, limit = 8): Promise<Gdac
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
-  return (await response.json()) as GdacsFranceEventsResponse;
+  return (await response.json()) as GdacsEuropeEventsResponse;
 }
 
 function demoWeatherData(): WeatherData {

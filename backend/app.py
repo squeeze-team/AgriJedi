@@ -13,7 +13,7 @@ Endpoints:
   POST /ndvi/stats             → NDVI summary statistics
   POST /chat/stream            → LangGraph + OpenRouter streaming chatbot
   POST /analysis/report        → structured AI risk analysis report for RiskAnalysisPanel
-  POST /events/gdacs/france    → GDACS hazard events filtered to France
+  POST /events/gdacs/europe    → GDACS hazard events filtered to Europe
 
 Agent-oriented (POST JSON body, single-call):
   POST /agent/yield-analysis   → per-crop NDVI + yield forecast for a bbox
@@ -121,7 +121,7 @@ class AnalysisReportRequest(BaseModel):
     )
 
 
-class GdacsFranceEventsRequest(BaseModel):
+class GdacsEuropeEventsRequest(BaseModel):
     days: int = Field(default=14, ge=1, le=60, description="Lookback window in days")
     limit: int = Field(default=8, ge=1, le=30, description="Max number of events returned")
 
@@ -313,10 +313,10 @@ async def chat_stream(payload: ChatStreamRequest):
     )
 
 
-@app.post("/events/gdacs/france")
-def gdacs_france_events(req: GdacsFranceEventsRequest):
+@app.post("/events/gdacs/europe")
+def gdacs_europe_events(req: GdacsEuropeEventsRequest):
     try:
-        data = _fetch_gdacs_france_events(days=req.days, limit=req.limit)
+        data = _fetch_gdacs_europe_events(days=req.days, limit=req.limit)
         return JSONResponse(content=data)
     except Exception as exc:
         now = datetime.now(timezone.utc).isoformat()
@@ -325,13 +325,19 @@ def gdacs_france_events(req: GdacsFranceEventsRequest):
             content={
                 "feed_ok": False,
                 "all_good": False,
-                "country": "France",
+                "region": "Europe",
                 "lookback_days": req.days,
                 "checked_at": now,
                 "events": [],
                 "message": f"GDACS feed unavailable: {exc}",
             },
         )
+
+
+@app.post("/events/gdacs/france")
+def gdacs_france_events_compat(req: GdacsEuropeEventsRequest):
+    # Backward-compatible alias for older frontend clients.
+    return gdacs_europe_events(req)
 
 
 @app.post("/analysis/report")
@@ -466,8 +472,31 @@ def _norm_token_list(value: Any) -> list[str]:
     return [token.strip().lower() for token in normalized.split(",") if token.strip()]
 
 
-def _is_france_event(properties: dict[str, Any]) -> bool:
-    france_tokens = {"fr", "fra", "france", "french republic"}
+def _is_europe_event_by_properties(properties: dict[str, Any]) -> bool:
+    europe_iso2 = {
+        "al", "ad", "am", "at", "az", "by", "be", "ba", "bg", "hr", "cy", "cz",
+        "dk", "ee", "fi", "fr", "ge", "de", "gr", "hu", "is", "ie", "it", "kz",
+        "xk", "lv", "li", "lt", "lu", "mt", "md", "mc", "me", "nl", "mk", "no",
+        "pl", "pt", "ro", "ru", "sm", "rs", "sk", "si", "es", "se", "ch", "tr",
+        "ua", "gb", "uk", "va",
+    }
+    europe_iso3 = {
+        "alb", "and", "arm", "aut", "aze", "blr", "bel", "bih", "bgr", "hrv", "cyp",
+        "cze", "dnk", "est", "fin", "fra", "geo", "deu", "grc", "hun", "isl", "irl",
+        "ita", "kaz", "xkx", "lva", "lie", "ltu", "lux", "mlt", "mda", "mco", "mne",
+        "nld", "mkd", "nor", "pol", "prt", "rou", "rus", "smr", "srb", "svk", "svn",
+        "esp", "swe", "che", "tur", "ukr", "gbr", "vat",
+    }
+    europe_names = {
+        "europe", "france", "germany", "italy", "spain", "portugal", "netherlands",
+        "belgium", "switzerland", "austria", "poland", "romania", "ukraine", "sweden",
+        "norway", "finland", "denmark", "ireland", "united kingdom", "uk", "greece",
+        "czech republic", "czechia", "hungary", "serbia", "croatia", "bulgaria",
+        "slovakia", "slovenia", "bosnia and herzegovina", "montenegro", "albania",
+        "north macedonia", "moldova", "lithuania", "latvia", "estonia", "luxembourg",
+        "iceland", "malta", "cyprus", "georgia", "armenia", "azerbaijan", "turkey",
+    }
+    europe_tokens = europe_iso2 | europe_iso3 | europe_names
     candidate_keys = (
         "country",
         "countries",
@@ -481,10 +510,41 @@ def _is_france_event(properties: dict[str, Any]) -> bool:
     for key in candidate_keys:
         if key in properties:
             tokens.extend(_norm_token_list(properties.get(key)))
-    if any(token in france_tokens for token in tokens):
+    if any(token in europe_tokens for token in tokens):
         return True
     joined = " ".join(tokens)
-    return "france" in joined or " fra " in f" {joined} "
+    return "europe" in joined
+
+
+def _iter_lon_lat_pairs(value: Any):
+    if isinstance(value, (list, tuple)):
+        if (
+            len(value) >= 2
+            and isinstance(value[0], (int, float))
+            and isinstance(value[1], (int, float))
+        ):
+            yield float(value[0]), float(value[1])
+            return
+        for item in value:
+            yield from _iter_lon_lat_pairs(item)
+
+
+def _is_europe_coord(lon: float, lat: float) -> bool:
+    # Approximate geographic envelope for Europe.
+    return -25.0 <= lon <= 45.0 and 34.0 <= lat <= 72.0
+
+
+def _feature_is_in_europe(feature: dict[str, Any], properties: dict[str, Any]) -> bool:
+    if _is_europe_event_by_properties(properties):
+        return True
+    geometry = feature.get("geometry", {}) if isinstance(feature, dict) else {}
+    coordinates = geometry.get("coordinates") if isinstance(geometry, dict) else None
+    if coordinates is None:
+        return False
+    for lon, lat in _iter_lon_lat_pairs(coordinates):
+        if _is_europe_coord(lon, lat):
+            return True
+    return False
 
 
 def _pick_event_value(properties: dict[str, Any], *keys: str, default: Any = None) -> Any:
@@ -494,7 +554,7 @@ def _pick_event_value(properties: dict[str, Any], *keys: str, default: Any = Non
     return default
 
 
-def _fetch_gdacs_france_events(days: int, limit: int) -> dict[str, Any]:
+def _fetch_gdacs_europe_events(days: int, limit: int) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     from_date = (now - timedelta(days=days)).strftime("%Y-%m-%d")
     to_date = now.strftime("%Y-%m-%d")
@@ -519,14 +579,14 @@ def _fetch_gdacs_france_events(days: int, limit: int) -> dict[str, Any]:
         payload = json.loads(response.read().decode("utf-8"))
 
     features = payload.get("features", []) if isinstance(payload, dict) else []
-    france_events: list[dict[str, Any]] = []
+    europe_events: list[dict[str, Any]] = []
     for feature in features:
         if not isinstance(feature, dict):
             continue
         properties = feature.get("properties", {})
         if not isinstance(properties, dict):
             continue
-        if not _is_france_event(properties):
+        if not _feature_is_in_europe(feature, properties):
             continue
 
         event_id = _pick_event_value(properties, "eventid", "episodeid", "id", default="")
@@ -535,10 +595,10 @@ def _fetch_gdacs_france_events(days: int, limit: int) -> dict[str, Any]:
         alert_level = _pick_event_value(properties, "alertlevel", default="unknown")
         start_date = _pick_event_value(properties, "fromdate", "begindate", "date", default="")
         end_date = _pick_event_value(properties, "todate", "enddate", default="")
-        country = _pick_event_value(properties, "country", "countryname", default="France")
+        country = _pick_event_value(properties, "country", "countryname", default="Europe")
         details_url = _pick_event_value(properties, "url", "link", default="")
 
-        france_events.append(
+        europe_events.append(
             {
                 "id": str(event_id),
                 "title": str(title),
@@ -551,20 +611,20 @@ def _fetch_gdacs_france_events(days: int, limit: int) -> dict[str, Any]:
             }
         )
 
-    france_events = sorted(
-        france_events,
+    europe_events = sorted(
+        europe_events,
         key=lambda event: event.get("start_date", ""),
         reverse=True,
     )[:limit]
 
     return {
         "feed_ok": True,
-        "all_good": len(france_events) == 0,
-        "country": "France",
+        "all_good": len(europe_events) == 0,
+        "region": "Europe",
         "lookback_days": days,
         "checked_at": now.isoformat(),
-        "events": france_events,
-        "message": "All good" if len(france_events) == 0 else f"{len(france_events)} event(s) found",
+        "events": europe_events,
+        "message": "All good" if len(europe_events) == 0 else f"{len(europe_events)} event(s) found",
     }
 
 
