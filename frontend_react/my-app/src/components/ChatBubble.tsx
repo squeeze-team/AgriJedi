@@ -56,7 +56,7 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
       id: 'welcome',
       sender: 'Agri Assistant',
       direction: 'incoming',
-      message: 'Hi, I am Agri Assistant. Ask me how to use this dashboard.',
+      message: 'Hi, I am AgroMind Assistant. Ask me anything about crops and agricultural conditions in France.',
     },
   ]);
 
@@ -272,8 +272,7 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
           <div className="shrink-0 border-b border-cyan-400/20 bg-slate-950/95 px-4 py-3">
             <div className="flex items-start justify-between gap-2">
               <div>
-                <p className="text-sm font-semibold text-cyan-200">Agri Assistant</p>
-                <p className="text-xs text-slate-400">Dashboard help</p>
+                <p className="text-sm font-semibold text-cyan-200">AgroMind Assistant</p>
               </div>
               <button
                 type="button"
@@ -361,7 +360,7 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
         className="flex h-14 w-14 items-center justify-center rounded-full border border-cyan-400/45 bg-gradient-to-br from-cyan-900/90 to-fuchsia-900/85 text-sm font-semibold text-cyan-100 shadow-[0_0_20px_rgba(34,211,238,0.4)] transition hover:from-cyan-800/95 hover:to-fuchsia-800/90"
         aria-label="Toggle chat"
       >
-        {isOpen ? '×' : 'AI'}
+        {isOpen ? '×' : 'Ask'}
       </button>
     </div>
   );

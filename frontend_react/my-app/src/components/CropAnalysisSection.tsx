@@ -28,7 +28,7 @@ export function CropAnalysisSection({ data, isLoading, error }: CropAnalysisSect
 
   return (
     <section className="mx-auto w-full max-w-[1400px] px-5 pb-7 md:px-7">
-      <h2 className="mb-4 text-lg font-bold tracking-[0.06em] text-slate-100">Per-Crop NDVI Analysis & Yield Proxy</h2>
+      <h2 className="mb-4 text-lg font-bold tracking-[0.06em] text-slate-100">Crop Health & Yield Outlook</h2>
 
       {isLoading && <div className="cyber-note p-5 text-sm text-slate-300">Analysing crop distribution and NDVI...</div>}
 

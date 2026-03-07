@@ -56,7 +56,7 @@ export function MapPanel({ bbox, legendItems }: MapPanelProps) {
 
   return (
     <section className="panel-card">
-      <div className="panel-title">Crop Distribution - CLMS + Sentinel-2</div>
+      <div className="panel-title">Regional Crop Distribution</div>
       <div className="relative h-[420px] w-full">
         <MapContainer center={[46.6, 2.5]} zoom={6} className="h-full w-full">
           <AutoFitBounds bounds={bounds} />

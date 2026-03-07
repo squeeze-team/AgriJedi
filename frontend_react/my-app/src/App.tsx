@@ -5,6 +5,7 @@ import { PriceChartPanel } from './components/PriceChartPanel';
 import { CropAnalysisSection } from './components/CropAnalysisSection';
 import { ChatBubble } from './components/ChatBubble';
 import type { CropLegendItem } from './components/CropLegend';
+import { FranceEventsPanel } from './components/FranceEventsPanel';
 import { RiskAnalysisPanel } from './components/RiskAnalysisPanel';
 import { SatelliteSection } from './components/SatelliteSection';
 import { WeatherChartPanel } from './components/WeatherChartPanel';
@@ -182,6 +183,7 @@ function App() {
         <MapPanel bbox={mapBbox} legendItems={dynamicLegendItems} />
         <WeatherChartPanel data={weatherData} />
         <PriceChartPanel data={priceData} />
+        <FranceEventsPanel />
       </main>
 
       <SatelliteSection
