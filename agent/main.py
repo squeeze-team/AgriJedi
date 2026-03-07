@@ -722,19 +722,30 @@ def exception_to_error_code(prefix: str, exc: Exception) -> str:
 
 
 def parse_json_object_from_text(text: str) -> Dict[str, Any] | None:
+    stripped = text.strip()
+    fenced_match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", stripped, flags=re.IGNORECASE)
+    if fenced_match:
+        candidate = fenced_match.group(1).strip()
+        try:
+            payload = json.loads(candidate)
+            if isinstance(payload, dict):
+                return payload
+        except json.JSONDecodeError:
+            pass
+
     try:
-        payload = json.loads(text)
+        payload = json.loads(stripped)
         if isinstance(payload, dict):
             return payload
     except json.JSONDecodeError:
         pass
 
-    start = text.find("{")
-    end = text.rfind("}")
+    start = stripped.find("{")
+    end = stripped.rfind("}")
     if start == -1 or end == -1 or end <= start:
         return None
     try:
-        payload = json.loads(text[start : end + 1])
+        payload = json.loads(stripped[start : end + 1])
     except json.JSONDecodeError:
         return None
     return payload if isinstance(payload, dict) else None
@@ -821,6 +832,12 @@ def parse_env_int(var_name: str, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return value if value > 0 else default
+
+
+def resolve_llm_endpoint_and_key() -> tuple[str, str | None]:
+    endpoint = os.getenv("OPENAI_API_URL", "https://api.openai.com/v1/chat/completions").strip()
+    api_key = os.getenv("OPENAI_API_KEY")
+    return endpoint, api_key
 
 
 def normalize_location_name(location: str) -> str:
@@ -983,15 +1000,12 @@ def build_llm_query_analysis(
     if httpx is None:
         return None
 
-    api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
+    endpoint, api_key = resolve_llm_endpoint_and_key()
     if not api_key:
         return None
 
-    endpoint = os.getenv("OPENAI_API_URL", "https://openrouter.ai/api/v1/chat/completions")
-    model = os.getenv("OPENAI_MODEL", "qwen/qwen3.5-flash-02-23")
+    model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
     timeout_seconds = parse_float(os.getenv("OPENAI_TIMEOUT_SECONDS", "25")) or 25.0
-    referer = os.getenv("OPENROUTER_HTTP_REFERER")
-    title = os.getenv("OPENROUTER_X_TITLE", "AgriMaster")
 
     system_prompt = (
         f"Role: {AGENT_PROMPTS['query_analysis_agent'].role}\n"
@@ -1010,10 +1024,6 @@ def build_llm_query_analysis(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    if referer:
-        headers["HTTP-Referer"] = referer
-    if title:
-        headers["X-Title"] = title
 
     with managed_http_client(timeout_seconds=timeout_seconds) as client:
         response = http_request_with_fallbacks(
@@ -1093,6 +1103,7 @@ def build_llm_query_analysis(
 def query_analysis_node(state: AgriState) -> Dict[str, Any]:
     user_query = state.get("user_query", "")
     fallback_crop = state.get("crop_type", "wheat")
+    llm_configured = bool(os.getenv("OPENAI_API_KEY"))
 
     llm_result = None
     query_error = ""
@@ -1117,17 +1128,19 @@ def query_analysis_node(state: AgriState) -> Dict[str, Any]:
         return result
 
     fallback_result = fallback_query_analysis(user_query, fallback_crop)
+    debug_reason = "fallback_query_analysis"
+    if query_error:
+        debug_reason = f"fallback_query_analysis_llm_error:{query_error}"
+    elif llm_configured:
+        debug_reason = "fallback_query_analysis_llm_invalid_response"
+
     result: Dict[str, Any] = {
         "crop_type": fallback_result["crop_type"],
         "query_analysis_report": fallback_result["analysis_report"],
-        "query_analysis_debug": "fallback_query_analysis",
+        "query_analysis_debug": debug_reason,
+        # Fallback succeeded, so keep query-analysis status non-failing.
+        "query_analysis_error": "",
     }
-    if query_error:
-        result["query_analysis_error"] = query_error
-    elif (os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")):
-        result["query_analysis_error"] = "query_analysis_llm:invalid_response"
-    else:
-        result["query_analysis_error"] = "query_analysis_llm:not_configured"
     if fallback_result.get("need_geo", True):
         result["need_geo"] = True
         result["field_name"] = fallback_result.get("field_name")
@@ -1282,66 +1295,339 @@ def build_rule_based_advisory(
     return "\n".join(lines)
 
 
+def normalize_run_mode(mode: Any) -> Literal["chat", "analysis"]:
+    value = str(mode or "").strip().lower()
+    if value == "analysis":
+        return "analysis"
+    return "chat"
+
+
+def crop_type_detected_in_bbox(state: AgriState) -> bool:
+    crop_health = state.get("crop_health_data", {})
+    yield_data = state.get("yield_analysis_data", {})
+    selection_reason = str(yield_data.get("selection_reason") or "")
+    status = str(crop_health.get("status") or "").strip().lower()
+    label = str(crop_health.get("yield_index_label") or "").strip().lower()
+    if selection_reason == "requested_crop_not_detected":
+        return False
+    if "not detected" in status or "not detected" in label:
+        return False
+    return True
+
+
+def infer_risk_score_1_to_5(state: AgriState) -> int:
+    crop_health = state.get("crop_health_data", {})
+    ndvi = clamp(parse_float(crop_health.get("ndvi")) or 0.6)
+    weather_risk = clamp(parse_float(state.get("weather_risk_score")) or 0.0)
+    combined = clamp((1.0 - ndvi) * 0.6 + weather_risk * 0.4)
+    return int(max(1, min(5, round(1 + combined * 4))))
+
+
+def infer_risk_triggers(state: AgriState, crop_in_bbox: bool) -> List[str] | None:
+    if not crop_in_bbox:
+        return None
+    triggers: List[str] = []
+    weather_risk = parse_float(state.get("weather_risk_score")) or 0.0
+    market_stats = state.get("market_price_stats", {})
+    trend = str(market_stats.get("trend_direction") or "stable")
+    change = parse_float(market_stats.get("period_change_pct"))
+    crop_health = state.get("crop_health_data", {})
+    ndvi = parse_float(crop_health.get("ndvi")) or 0.0
+    stage = str(state.get("phenology_stage") or "Unknown")
+    moisture = parse_float(state.get("weather_forecast", {}).get("soil_moisture_pct"))
+
+    if weather_risk >= 0.7:
+        triggers.append("High weather-risk score (heat/flood stress regime).")
+    if moisture is not None and moisture < 20:
+        triggers.append("Low soil-moisture signal (<20%) during growth window.")
+    if ndvi < 0.5:
+        triggers.append("Weak NDVI canopy signal.")
+    if stage in {"Flowering", "Grain Filling"}:
+        triggers.append("Critical phenology stage sensitivity (flowering/grain filling).")
+    if trend == "falling" and change is not None and change <= -10:
+        triggers.append("Downward market trend with meaningful price drawdown.")
+    if not triggers:
+        triggers.append("No acute trigger; continue routine monitoring.")
+    return triggers
+
+
+def build_llm_analysis_enrichment(
+    state: AgriState,
+    final_action: str,
+) -> Dict[str, Any] | None:
+    if httpx is None:
+        return None
+
+    endpoint, api_key = resolve_llm_endpoint_and_key()
+    if not api_key:
+        return None
+
+    model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+    timeout_seconds = parse_float(os.getenv("OPENAI_TIMEOUT_SECONDS", "25")) or 25.0
+
+    system_prompt = (
+        "You are an agricultural risk analyst. "
+        "Return strict JSON only with keys:\n"
+        "1) bio_monitor_interpretation: object\n"
+        "2) risk_triggers: array of short strings (1-5 items)\n"
+        "Do not add markdown. Do not include any extra keys."
+    )
+    user_payload = (
+        f"{compose_orchestrator_facts(state, final_action)}\n"
+        "Task: generate concise bio-monitor interpretation and risk triggers."
+    )
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    with managed_http_client(timeout_seconds=timeout_seconds) as client:
+        response = http_request_with_fallbacks(
+            client,
+            "POST",
+            endpoint,
+            headers=headers,
+            json_body={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_payload},
+                ],
+                "temperature": 0.0,
+            },
+        )
+        safe_raise_for_status(response)
+        payload = response.json()
+
+    choices = payload.get("choices", []) if isinstance(payload, dict) else []
+    if not choices or not isinstance(choices[0], dict):
+        return None
+    message = choices[0].get("message", {})
+    if not isinstance(message, dict):
+        return None
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        return None
+
+    parsed = parse_json_object_from_text(content)
+    if not isinstance(parsed, dict):
+        return None
+
+    bio_payload = parsed.get("bio_monitor_interpretation")
+    triggers_payload = parsed.get("risk_triggers")
+    if not isinstance(bio_payload, dict):
+        bio_payload = {}
+
+    triggers: List[str] = []
+    if isinstance(triggers_payload, list):
+        for item in triggers_payload:
+            if isinstance(item, str):
+                value = item.strip()
+                if value:
+                    triggers.append(value)
+    if not triggers:
+        return None
+
+    return {
+        "bio_monitor_interpretation": bio_payload,
+        "risk_triggers": triggers[:5],
+    }
+
+
+def build_analysis_output(
+    state: AgriState,
+    final_action: str,
+    crop_in_bbox: bool,
+) -> Dict[str, Any]:
+    crop_type = normalize_crop_type(state.get("crop_type", "wheat"))
+    crop_health = state.get("crop_health_data", {})
+    market_stats = state.get("market_price_stats", {})
+    weather = state.get("weather_forecast", {})
+    bio = state.get("bio_monitor", {})
+    recommended_action = final_action.lower()
+
+    geospatial_context = {
+        "location": state.get("location_name"),
+        "country_code": state.get("country_code"),
+        "bbox": state.get("bbox"),
+        "requested_crop_type": crop_type,
+        "selected_crop_group": crop_health.get("selected_crop_group"),
+        "crop_detection_status": "detected" if crop_in_bbox else "not_detected",
+    }
+
+    yield_assessment: Dict[str, Any] | None = {
+        "ndvi": crop_health.get("ndvi"),
+        "yield_index": crop_health.get("yield_index"),
+        "yield_index_label": crop_health.get("yield_index_label"),
+        "predicted_yield_t_ha": crop_health.get("predicted_yield_t_ha"),
+        "confidence": crop_health.get("confidence"),
+        "status": crop_health.get("status"),
+    }
+    bio_interpretation: Dict[str, Any] | None = {
+        "phenology_stage": bio.get("phenology_stage"),
+        "bio_risk_score": bio.get("risk_score"),
+        "alert_code": bio.get("alert_code"),
+        "mitigation": bio.get("mitigation"),
+        "stress_summary": bio.get("stress_summary"),
+    }
+    risk_triggers_value: List[str] | None = infer_risk_triggers(state, crop_in_bbox)
+
+    if not crop_in_bbox:
+        yield_assessment = None
+        bio_interpretation = None
+        risk_triggers_value = None
+        recommended_action_value: str | None = None
+        risk_score_value: int | None = None
+    else:
+        recommended_action_value = recommended_action
+        risk_score_value = infer_risk_score_1_to_5(state)
+        try:
+            llm_enriched = build_llm_analysis_enrichment(state, final_action)
+        except Exception:
+            llm_enriched = None
+        if isinstance(llm_enriched, dict):
+            llm_bio = llm_enriched.get("bio_monitor_interpretation")
+            llm_triggers = llm_enriched.get("risk_triggers")
+            if isinstance(llm_bio, dict) and llm_bio:
+                bio_interpretation = llm_bio
+            if isinstance(llm_triggers, list) and llm_triggers:
+                risk_triggers_value = [str(item) for item in llm_triggers if str(item).strip()]
+
+    return {
+        "crop_type_in_bbox": crop_in_bbox,
+        "crop_type": crop_type,
+        "risk_score": risk_score_value,
+        "Geospatial & Crop Context：": geospatial_context,
+        "Yield & Vegetation Assessment：": yield_assessment,
+        "Market & Weather Risk Assessment:": {
+            "market_focus_crop": state.get("market_focus_crop"),
+            "latest_price": market_stats.get("latest_price"),
+            "trend_direction": market_stats.get("trend_direction"),
+            "period_change_pct": market_stats.get("period_change_pct"),
+            "weather_risk_score": state.get("weather_risk_score"),
+            "soil_moisture_pct": weather.get("soil_moisture_pct"),
+            "precipitation_mm": weather.get("precipitation_mm"),
+            "heat_risk": weather.get("heat_risk"),
+            "flood_risk": weather.get("flood_risk"),
+        },
+        "recommended_action": recommended_action_value,
+        "Bio-monitor Interpretation:": bio_interpretation,
+        "Risk Triggers to Watch (next planning horizon):": risk_triggers_value,
+    }
+
+
+def build_chat_markdown_advisory(
+    state: AgriState,
+    final_action: str,
+    override_reason: str | None,
+    crop_in_bbox: bool,
+) -> str:
+    crop_health = state.get("crop_health_data", {})
+    market_stats = state.get("market_price_stats", {})
+    weather = state.get("weather_forecast", {})
+    bio = state.get("bio_monitor", {})
+    recommended_action = final_action.lower()
+    lines = [
+        "# 🌾 AgriMind Response",
+        "",
+        "## 🧭 User Intent",
+        f"- Query: {state.get('user_query', '')}",
+        f"- Orchestrator context: {AGENT_PROMPTS['orchestrator'].context}",
+        f"- Crop: {state.get('crop_type', 'unknown')}",
+        f"- Location: {state.get('location_name', 'unknown')} ({state.get('country_code', 'n/a')})",
+        f"- BBox: {state.get('bbox')}",
+        "",
+    ]
+
+    if not crop_in_bbox:
+        lines.extend(
+            [
+                "## ⚠️ Yield & Vegetation Assessment",
+                "> **Warning: Requested crop not detected in this bbox/date window.**",
+                "- Yield interpretation confidence: low (crop absence in selected bbox/date).",
+                "- Recommendation: adjust bbox/date or verify crop presence before making yield-based trading decisions.",
+                "",
+                "## 💹 Market & Weather Snapshot",
+                f"- Market crop: {state.get('market_focus_crop', 'n/a')}",
+                f"- Latest price: {market_stats.get('latest_price')}",
+                f"- Trend: {market_stats.get('trend_direction')} ({market_stats.get('period_change_pct')}%)",
+                f"- Weather risk: {state.get('weather_risk_score')} | Moisture: {weather.get('soil_moisture_pct')}%",
+                "",
+                "## ✅ Action",
+                "- Recommended Action: unavailable (crop not detected in bbox).",
+            ]
+        )
+        return "\n".join(lines)
+
+    lines.extend(
+        [
+            "## 🌱 Yield & Vegetation Assessment",
+            f"- NDVI: {crop_health.get('ndvi')} | Yield index: {crop_health.get('yield_index')} ({crop_health.get('yield_index_label')})",
+            f"- Predicted yield (t/ha): {crop_health.get('predicted_yield_t_ha')} | Confidence: {crop_health.get('confidence')}",
+            "",
+            "## 💹 Market & Weather Risk Assessment",
+            f"- Market crop: {state.get('market_focus_crop', 'n/a')}",
+            f"- Price: {market_stats.get('latest_price')} | Trend: {market_stats.get('trend_direction')} ({market_stats.get('period_change_pct')}%)",
+            f"- Weather risk: {state.get('weather_risk_score')} | Moisture: {weather.get('soil_moisture_pct')}% | Heat risk: {weather.get('heat_risk')}",
+            "",
+            "## 🧬 Bio-monitor Interpretation",
+            f"- Stage: {bio.get('phenology_stage')} | Risk: {bio.get('risk_score')}",
+            f"- Alert: {bio.get('alert_code')} | Mitigation: {bio.get('mitigation')}",
+            "",
+            "## 🔭 Risk Triggers (Next Horizon)",
+        ]
+    )
+    triggers = infer_risk_triggers(state, crop_in_bbox) or []
+    for trigger in triggers:
+        lines.append(f"- {trigger}")
+    lines.extend(
+        [
+            "",
+            "## ✅ Recommended Action",
+            f"- Recommended Action: {recommended_action}",
+        ]
+    )
+    if override_reason:
+        lines.append(f"- Override reason: {override_reason}")
+    return "\n".join(lines)
+
+
 def build_llm_advisory(
     state: AgriState,
     final_action: str,
     override_reason: str | None,
+    crop_in_bbox: bool,
 ) -> str | None:
     if httpx is None:
         return None
 
-    api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
+    endpoint, api_key = resolve_llm_endpoint_and_key()
     if not api_key:
         return None
 
-    endpoint = os.getenv("OPENAI_API_URL", "https://openrouter.ai/api/v1/chat/completions")
-    model = os.getenv("OPENAI_MODEL", "qwen/qwen3.5-flash-02-23")
+    model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
     timeout_seconds = parse_float(os.getenv("OPENAI_TIMEOUT_SECONDS", "25")) or 25.0
     temperature = parse_float(os.getenv("OPENAI_TEMPERATURE", "0.2"))
     if temperature is None:
         temperature = 0.2
-    referer = os.getenv("OPENROUTER_HTTP_REFERER")
-    title = os.getenv("OPENROUTER_X_TITLE", "AgriMaster")
 
     system_prompt = (
         f"Role: {AGENT_PROMPTS['orchestrator'].role}\n"
         f"Context: {AGENT_PROMPTS['orchestrator'].context}\n"
         f"Instruction: {AGENT_PROMPTS['orchestrator'].prompt}\n"
-        "Write a comprehensive operations report for agriculture stakeholders. "
+        "Generate a polished, visual-friendly markdown response with meaningful emojis. "
         "Keep facts strictly faithful to provided inputs and do not invent data.\n"
-        "Output must be polished, readable markdown with clear section headers, concise bullets, "
-        "and compact tables where useful.\n"
-        "Use the provided `Crop report markdown` as the primary source for crop-specific "
-        "financial intelligence when it is available (wheat/corn/grape). "
-        "If crop report markdown is unavailable or empty, explicitly say so and rely on "
-        "market overview + weather + yield inputs only.\n"
-        "Do not copy long verbatim passages from the markdown report; synthesize key signals "
-        "into concise, decision-oriented statements.\n"
-        "Required output format (markdown):\n"
-        "1) Executive Summary (3-5 sentences)\n"
-        "2) Parsed User Intent\n"
-        "3) Geospatial & Crop Context\n"
-        "4) Yield & Vegetation Assessment\n"
-        "5) Market & Weather Risk Assessment\n"
-        "6) Bio-monitor Interpretation\n"
-        "7) Recommended Action Plan\n"
-        "8) Risk Triggers to Watch (next planning horizon)\n"
-        "9) Confidence & Data Quality Notes\n"
-        "If yield analysis indicates the requested crop is not detected in the bbox/date "
-        "(for example `selection_reason=requested_crop_not_detected`, "
-        "`yield_index_label` contains `not detected`, or status is `No crop detected`), "
-        "then in section 4 add a prominent warning line exactly like:\n"
+        "Use clear headers and concise bullets.\n"
+        "If crop is not detected in bbox/date, prominently include:\n"
         "> **Warning: Requested crop not detected in this bbox/date window.**\n"
-        "In that case, do not frame the result as biological stress, and explicitly mark "
-        "yield interpretation confidence as low due to crop absence.\n"
-        "In section 5, if crop report markdown is present, include at least two financial "
-        "signals from it (for example futures momentum, supply regime, FX, oil/input costs, "
-        "or demand structure) and reconcile them with market-overview stats.\n"
-        "In section 7, include exactly one line: `Recommended Action: <action>` where "
-        "<action> matches the provided action signal. Do not output chain-of-thought."
+        "and avoid framing it as biological stress.\n"
+        "Use Crop report markdown as primary financial context when available, and reconcile it with market-overview stats.\n"
+        "Include one line exactly as: `Recommended Action: <action>` where <action> matches provided action signal.\n"
+        "Do not output chain-of-thought."
     )
 
-    user_payload = compose_orchestrator_facts(state, final_action)
+    user_payload = f"{compose_orchestrator_facts(state, final_action)}\nCrop detected in bbox/date: {crop_in_bbox}"
     if override_reason:
         user_payload = f"{user_payload}\nOverride reason: {override_reason}"
 
@@ -1349,10 +1635,6 @@ def build_llm_advisory(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    if referer:
-        headers["HTTP-Referer"] = referer
-    if title:
-        headers["X-Title"] = title
 
     with managed_http_client(timeout_seconds=timeout_seconds) as client:
         response = http_request_with_fallbacks(
@@ -1949,10 +2231,15 @@ def orchestrator_node(state: AgriState) -> Dict[str, Any]:
     moisture = parse_float(forecast.get("soil_moisture_pct"))
     price_change = parse_float(market_stats.get("period_change_pct"))
     trend_direction = str(market_stats.get("trend_direction") or "stable")
+    mode = normalize_run_mode(state.get("run_mode", "chat"))
+    crop_in_bbox = crop_type_detected_in_bbox(state)
     final_action = "Hold"
     override_reason = None
 
-    if forecast.get("extreme_event"):
+    if not crop_in_bbox:
+        final_action = "Hold"
+        override_reason = "Requested crop is not detected in the selected bbox/date."
+    elif forecast.get("extreme_event"):
         final_action = "Sell"
         override_reason = "Extreme weather risk requires immediate risk reduction."
     elif trend_direction == "falling" and price_change is not None and price_change <= -20:
@@ -1965,10 +2252,18 @@ def orchestrator_node(state: AgriState) -> Dict[str, Any]:
         final_action = "Sell"
         override_reason = "Severe biological stress requires immediate risk reduction."
 
+    if mode == "analysis":
+        analysis_payload = build_analysis_output(state, final_action, crop_in_bbox)
+        return {
+            "final_advisory": json.dumps(analysis_payload, ensure_ascii=False, indent=2),
+            "orchestrator_debug": "deterministic_structured_analysis_json",
+            "orchestrator_error": "",
+        }
+
     orchestrator_error = ""
     llm_advisory = None
     try:
-        llm_advisory = build_llm_advisory(state, final_action, override_reason)
+        llm_advisory = build_llm_advisory(state, final_action, override_reason, crop_in_bbox)
     except Exception as exc:
         orchestrator_error = exception_to_error_code("orchestrator_llm", exc)
 
@@ -1980,13 +2275,18 @@ def orchestrator_node(state: AgriState) -> Dict[str, Any]:
         }
 
     return {
-        "final_advisory": build_rule_based_advisory(state, final_action, override_reason),
-        "orchestrator_debug": "fallback_rule_based_orchestrator",
+        "final_advisory": build_chat_markdown_advisory(
+            state=state,
+            final_action=final_action,
+            override_reason=override_reason,
+            crop_in_bbox=crop_in_bbox,
+        ),
+        "orchestrator_debug": "fallback_chat_markdown_orchestrator",
         "orchestrator_error": (
             orchestrator_error
             or (
                 "orchestrator_llm:invalid_response"
-                if (os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY"))
+                if os.getenv("OPENAI_API_KEY")
                 else "orchestrator_llm:not_configured"
             )
         ),
@@ -2101,17 +2401,25 @@ def build_graph():
     return graph.compile()
 
 
-def run_agri_pulse_nexus(
+def run_agri_mind(
     user_query: str,
-    run_mode: str = "interactive",
+    run_mode: str = "chat",
 ) -> AgriState:
     app = build_graph()
+    mode = normalize_run_mode(run_mode)
     initial_state: AgriState = {
         "user_query": user_query,
-        "run_mode": run_mode,
+        "run_mode": mode,
         "is_emergency": False,
     }
     return app.invoke(initial_state)
+
+
+def run_agri_pulse_nexus(
+    user_query: str,
+    run_mode: str = "chat",
+) -> AgriState:
+    return run_agri_mind(user_query=user_query, run_mode=run_mode)
 
 
 def print_architecture_summary() -> None:
@@ -2123,6 +2431,7 @@ def print_architecture_summary() -> None:
     print(f"Market Overview: {API_CONFIG.market_overview}")
     print(f"Weather: {API_CONFIG.weather}")
     print(f"User-Agent: {API_ADAPTERS.user_agent}")
+    print("Run modes: chat | analysis")
     print("\nGraph")
     print("-----")
     print("START -> query_analysis_agent -> query_validation")
@@ -2136,9 +2445,9 @@ def print_architecture_summary() -> None:
 def main() -> None:
     print_architecture_summary()
     try:
-        state = run_agri_pulse_nexus(
-            user_query="Assess wheat risk and selling strategy at lat: 48.8566, lon: 2.3522.",
-            run_mode="cron",
+        state = run_agri_mind(
+            user_query="Assess wheat risk and selling strategy at 1.0, 47.5, 2.6, 48.6",
+            run_mode="analysis",
         )
     except RuntimeError as exc:
         print(f"\nRuntime note: {exc}")
