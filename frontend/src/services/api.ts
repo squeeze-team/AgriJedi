@@ -43,6 +43,102 @@ export interface WeatherForecastData {
   days: WeatherForecastDay[];
 }
 
+export interface UsageLimits {
+  session_chat_max: number;
+  session_analysis_max: number;
+  device_daily_max: number;
+  ip_daily_max: number;
+}
+
+export interface UsageRemaining {
+  session_chat_remaining: number;
+  session_analysis_remaining: number;
+  device_daily_remaining: number;
+  ip_daily_remaining: number;
+  today_remaining: number;
+  session_chat_used: number;
+  session_analysis_used: number;
+  device_daily_used: number;
+  ip_daily_used: number;
+  session_chat_reset_at: string;
+  session_analysis_reset_at: string;
+  day_reset_at: string;
+}
+
+export interface FeatureFlagsResponse {
+  rate_limit_enabled: boolean;
+  show_session_limits_notice: boolean;
+  usage_limits: UsageLimits;
+  usage_remaining?: UsageRemaining;
+}
+
+export interface RateLimitErrorPayload {
+  code: 'RATE_LIMIT_EXCEEDED';
+  limit_type: 'session' | 'device_daily' | 'ip_daily' | string;
+  message: string;
+  limit: number;
+  used: number;
+  remaining: number;
+  remaining_today?: number;
+  reset_at?: string;
+}
+
+const SESSION_ID_KEY = 'agromind_session_id';
+const DEVICE_FP_KEY = 'agromind_device_fp';
+
+function randomToken(prefix: string) {
+  const rand =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${prefix}-${rand}`;
+}
+
+function getSessionId(): string {
+  try {
+    const existing = window.sessionStorage.getItem(SESSION_ID_KEY);
+    if (existing) {
+      return existing;
+    }
+    const created = randomToken('sess');
+    window.sessionStorage.setItem(SESSION_ID_KEY, created);
+    return created;
+  } catch {
+    return randomToken('sess-fallback');
+  }
+}
+
+function getDeviceFingerprint(): string {
+  try {
+    const existing = window.localStorage.getItem(DEVICE_FP_KEY);
+    if (existing) {
+      return existing;
+    }
+    const created = randomToken('dev');
+    window.localStorage.setItem(DEVICE_FP_KEY, created);
+    return created;
+  } catch {
+    return randomToken('dev-fallback');
+  }
+}
+
+export function getClientRateLimitHeaders(): Record<string, string> {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+  return {
+    'X-Session-Id': getSessionId(),
+    'X-Device-Fingerprint': getDeviceFingerprint(),
+  };
+}
+
+function jsonHeaders(): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    ...getClientRateLimitHeaders(),
+  };
+}
+
 export interface PriceHistoryData {
   months: string[];
   prices: number[];
@@ -144,7 +240,7 @@ export async function fetchWeather(): Promise<WeatherData> {
   try {
     const response = await fetch(`${API_BASE}/weather/france`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({ start, end }),
     });
     const data = (await response.json()) as Partial<WeatherData>;
@@ -161,7 +257,7 @@ export async function fetchWeatherForecast(days = 7): Promise<WeatherForecastDat
   try {
     const response = await fetch(`${API_BASE}/weather/france/forecast`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({ days }),
     });
     if (!response.ok) {
@@ -177,11 +273,57 @@ export async function fetchWeatherForecast(days = 7): Promise<WeatherForecastDat
   }
 }
 
+export async function fetchFeatureFlags(): Promise<FeatureFlagsResponse> {
+  const response = await fetch(`${API_BASE}/config/feature-flags`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify({}),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return (await response.json()) as FeatureFlagsResponse;
+}
+
+export async function parseErrorDetail(response: Response): Promise<string> {
+  let payload: unknown = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (
+    response.status === 429 &&
+    payload &&
+    typeof payload === 'object' &&
+    'detail' in payload &&
+    payload.detail &&
+    typeof payload.detail === 'object' &&
+    'code' in payload.detail &&
+    payload.detail.code === 'RATE_LIMIT_EXCEEDED'
+  ) {
+    const detail = payload.detail as RateLimitErrorPayload;
+    const todayRemaining = detail.remaining_today ?? 0;
+    const resetAt = detail.reset_at ? new Date(detail.reset_at).toLocaleString() : 'later';
+    return `Usage quota exhausted. Remaining today: ${todayRemaining}. Resets at ${resetAt}.`;
+  }
+
+  if (payload && typeof payload === 'object' && 'detail' in payload) {
+    const detail = (payload as { detail?: unknown }).detail;
+    if (typeof detail === 'string' && detail.trim()) {
+      return detail;
+    }
+  }
+
+  return `HTTP ${response.status}`;
+}
+
 export async function fetchPriceHistory(crop: Crop): Promise<PriceHistoryData> {
   try {
     const response = await fetch(`${API_BASE}/prices/history`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({ crop }),
     });
     const data = (await response.json()) as { dates?: string[]; prices?: number[]; unit?: string };
@@ -245,7 +387,7 @@ export async function fetchYieldPrediction(crop: Crop): Promise<YieldPrediction>
   try {
     const response = await fetch(`${API_BASE}/predict/yield`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({ crop, country: 'France' }),
     });
     return (await response.json()) as YieldPrediction;
@@ -258,7 +400,7 @@ export async function fetchPricePrediction(crop: Crop): Promise<PricePrediction>
   try {
     const response = await fetch(`${API_BASE}/predict/price`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({ crop }),
     });
     return (await response.json()) as PricePrediction;
@@ -270,7 +412,7 @@ export async function fetchPricePrediction(crop: Crop): Promise<PricePrediction>
 export async function fetchCropAnalysis(bbox: string, date: string): Promise<CropAnalysisResponse> {
   const response = await fetch(`${API_BASE}/analysis/crop-ndvi`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: jsonHeaders(),
     body: JSON.stringify({
       bbox: parseBboxString(bbox),
       date,
@@ -290,7 +432,7 @@ export async function fetchSatelliteLayerImage(
 ): Promise<string> {
   const response = await fetch(`${API_BASE}/satellite/view`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: jsonHeaders(),
     body: JSON.stringify({
       bbox: parseBboxString(bbox),
       date,
@@ -351,7 +493,7 @@ export async function fetchAnalysisReport(
 ): Promise<AnalysisReport> {
   const response = await fetch(`${API_BASE}/analysis/report`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: jsonHeaders(),
     body: JSON.stringify({
       bbox,
       crop: options?.crop,
@@ -360,7 +502,7 @@ export async function fetchAnalysisReport(
     }),
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw new Error(await parseErrorDetail(response));
   }
   return (await response.json()) as AnalysisReport;
 }
@@ -389,7 +531,7 @@ export interface GdacsEuropeEventsResponse {
 export async function fetchEuropeGdacsEvents(days = 14, limit = 8): Promise<GdacsEuropeEventsResponse> {
   const response = await fetch(`${API_BASE}/events/gdacs/europe`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: jsonHeaders(),
     body: JSON.stringify({ days, limit }),
   });
   if (!response.ok) {

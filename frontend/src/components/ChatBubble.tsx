@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Avatar,
   MainContainer,
@@ -8,7 +8,13 @@ import {
 } from '@chatscope/chat-ui-kit-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { API_BASE } from '../services/api';
+import {
+  API_BASE,
+  fetchFeatureFlags,
+  getClientRateLimitHeaders,
+  parseErrorDetail,
+  type UsageRemaining,
+} from '../services/api';
 
 type ChatMsg = {
   id: string;
@@ -51,6 +57,8 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [currentStage, setCurrentStage] = useState<string | null>(null);
+  const [rateLimitEnabled, setRateLimitEnabled] = useState(false);
+  const [usageRemaining, setUsageRemaining] = useState<UsageRemaining | null>(null);
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState<ChatMsg[]>([
     {
@@ -73,6 +81,24 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
       ),
     );
   };
+
+  async function refreshUsageQuota() {
+    try {
+      const flags = await fetchFeatureFlags();
+      setRateLimitEnabled(Boolean(flags.rate_limit_enabled));
+      setUsageRemaining(flags.usage_remaining ?? null);
+    } catch {
+      setRateLimitEnabled(false);
+      setUsageRemaining(null);
+    }
+  }
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    void refreshUsageQuota();
+  }, [isOpen]);
 
   const sendMessage = async (content: string) => {
     const trimmed = content.trim();
@@ -111,7 +137,10 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
     try {
       const response = await fetch(`${API_BASE}/chat/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getClientRateLimitHeaders(),
+        },
         body: JSON.stringify({
           message: trimmed,
           history: historyForApi,
@@ -119,7 +148,7 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
       });
 
       if (!response.ok || !response.body) {
-        throw new Error(`HTTP ${response.status}`);
+        throw new Error(await parseErrorDetail(response));
       }
 
       const reader = response.body.getReader();
@@ -206,14 +235,17 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
           ),
         );
       }
-    } catch {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Request failed.';
       setCurrentStage(null);
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === assistantId
             ? {
                 ...msg,
-                message: createAssistantReply(trimmed),
+                message: message.toLowerCase().includes('quota exhausted')
+                  ? `⚠️ ${message}`
+                  : createAssistantReply(trimmed),
               }
             : msg,
         ),
@@ -221,6 +253,7 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
     } finally {
       setIsTyping(false);
       setCurrentStage(null);
+      void refreshUsageQuota();
     }
   };
 
@@ -286,6 +319,19 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
                 {isExpanded ? 'Restore' : 'Expand'}
               </button>
             </div>
+            {rateLimitEnabled && usageRemaining && (
+              <div className="mt-2 grid grid-cols-3 gap-2 text-[10px]">
+                <div className="rounded-md border border-cyan-400/30 bg-cyan-400/10 px-2 py-1 text-cyan-100">
+                  Chat left: <span className="font-semibold">{usageRemaining.session_chat_remaining}</span>
+                </div>
+                <div className="rounded-md border border-fuchsia-400/30 bg-fuchsia-400/10 px-2 py-1 text-fuchsia-100">
+                  Analysis left: <span className="font-semibold">{usageRemaining.session_analysis_remaining}</span>
+                </div>
+                <div className="rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 text-emerald-100">
+                  Today left: <span className="font-semibold">{usageRemaining.today_remaining}</span>
+                </div>
+              </div>
+            )}
           </div>
           <div className="min-h-0 flex-1">
             <MainContainer>

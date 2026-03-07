@@ -15,6 +15,7 @@ Endpoints:
   POST /chat/stream            → LangGraph + OpenRouter streaming chatbot
   POST /analysis/report        → structured AI risk analysis report for RiskAnalysisPanel
   POST /events/gdacs/europe    → GDACS hazard events filtered to Europe
+  POST /config/feature-flags   → frontend feature flags and usage notice limits
 
 Agent-oriented (POST JSON body, single-call):
   POST /agent/yield-analysis   → per-crop NDVI + yield forecast for a bbox
@@ -32,9 +33,9 @@ from typing import Any, Literal
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request as UrlRequest, urlopen
 
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, Response, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -63,6 +64,7 @@ from services.faostat import get_yield_history, compute_yield_features
 from services.prices_worldbank import get_price_history, compute_price_features
 from services.agent_full import stream_agent_events
 from services.agent_full import core as agent_full_core
+from services.rate_limit import enforce_rate_limits, get_rate_limit_settings, get_rate_limit_usage
 
 from features.build_features import build_feature_vector
 from features.models import predict_yield, predict_price
@@ -125,6 +127,10 @@ class AnalysisReportRequest(BaseModel):
 class GdacsEuropeEventsRequest(BaseModel):
     days: int = Field(default=14, ge=1, le=60, description="Lookback window in days")
     limit: int = Field(default=8, ge=1, le=30, description="Max number of events returned")
+
+
+class FeatureFlagsRequest(BaseModel):
+    pass
 
 
 def _parse_bbox_string(bbox_raw: str) -> list[float]:
@@ -265,7 +271,7 @@ def health():
 
 
 @app.post("/chat/stream")
-async def chat_stream(payload: ChatStreamRequest):
+async def chat_stream(request: Request, payload: ChatStreamRequest):
     """
     Stream chat response as SSE.
     Each event:
@@ -273,6 +279,8 @@ async def chat_stream(payload: ChatStreamRequest):
       data: {"type":"done"}
       data: {"type":"error","error":"..."}
     """
+
+    enforce_rate_limits(request, scope="chat_analysis", session_bucket="chat")
 
     async def sse_stream():
         try:
@@ -342,7 +350,8 @@ def gdacs_france_events_compat(req: GdacsEuropeEventsRequest):
 
 
 @app.post("/analysis/report")
-def analysis_report(req: AnalysisReportRequest):
+def analysis_report(request: Request, req: AnalysisReportRequest):
+    enforce_rate_limits(request, scope="chat_analysis", session_bucket="analysis")
     bbox = _parse_bbox_string(req.bbox)
     west, south, east, north = bbox
     center_lat = round((south + north) / 2.0, 6)
@@ -382,6 +391,25 @@ def list_crops():
         }
         for name, cfg in CROP_CONFIG.items()
     }
+
+
+@app.post("/config/feature-flags")
+def config_feature_flags(request: Request, _req: FeatureFlagsRequest = FeatureFlagsRequest()):
+    rate = get_rate_limit_settings()
+    usage = get_rate_limit_usage(request, scope="chat_analysis")
+    return JSONResponse(
+        content={
+            "rate_limit_enabled": rate.enabled,
+            "show_session_limits_notice": os.getenv("APP_SHOW_USAGE_NOTICE", "false").strip().lower() in {"1", "true", "yes", "on"},
+            "usage_limits": {
+                "session_chat_max": rate.session_chat_limit,
+                "session_analysis_max": rate.session_analysis_limit,
+                "device_daily_max": rate.device_daily_limit,
+                "ip_daily_max": rate.ip_daily_limit,
+            },
+            "usage_remaining": usage,
+        }
+    )
 
 
 # ─── Request models for non-agent endpoints ─────────────────────
@@ -574,7 +602,7 @@ def _fetch_gdacs_europe_events(days: int, limit: int) -> dict[str, Any]:
         }
     )
     url = f"https://www.gdacs.org/gdacsapi/api/events/geteventlist/EVENTS4APP?{params}"
-    request = Request(
+    request = UrlRequest(
         url,
         headers={
             "Accept": "application/json",
