@@ -13,9 +13,9 @@ interface PricePoint {
 }
 
 const seriesStyles: SeriesStyle[] = [
-  { key: 'wheat', label: 'Wheat', color: '#16a34a' },
-  { key: 'maize', label: 'Maize', color: '#2563eb' },
-  { key: 'grape', label: 'Grapes', color: '#9333ea' },
+  { key: 'wheat', label: 'Wheat', color: '#22d3ee' },
+  { key: 'maize', label: 'Maize', color: '#e879f9' },
+  { key: 'grape', label: 'Grapes', color: '#34d399' },
 ];
 
 function shortMonthLabel(value: string) {
@@ -28,6 +28,7 @@ function shortMonthLabel(value: string) {
 
 export function renderPriceChart(container: HTMLDivElement, data: MultiPriceHistoryData) {
   container.replaceChildren();
+  container.style.position = 'relative';
 
   const width = Math.max(320, container.clientWidth);
   const height = Math.max(220, container.clientHeight);
@@ -87,6 +88,12 @@ export function renderPriceChart(container: HTMLDivElement, data: MultiPriceHist
     .attr('role', 'img')
     .attr('aria-label', 'Commodity price history chart');
 
+  const tooltip = d3
+    .select(container)
+    .append('div')
+    .attr('class', 'chart-tooltip')
+    .style('opacity', '0');
+
   svg
     .append('g')
     .attr('transform', `translate(${margin.left},0)`)
@@ -98,13 +105,15 @@ export function renderPriceChart(container: HTMLDivElement, data: MultiPriceHist
         .tickFormat(() => ''),
     )
     .call((axis) => axis.select('.domain').remove())
-    .call((axis) => axis.selectAll('.tick line').attr('stroke', '#e2e8f0'));
+    .call((axis) => axis.selectAll('.tick line').attr('stroke', 'rgba(148,163,184,0.24)'));
 
   const line = d3
     .line<PricePoint>()
     .defined((point) => Number.isFinite(point.value))
     .x((point) => x(point.month) ?? margin.left)
     .y((point) => y(point.value));
+
+  const dotsGroups: Array<d3.Selection<SVGCircleElement, PricePoint, SVGGElement, unknown>> = [];
 
   series.forEach((lineSeries) => {
     svg
@@ -114,6 +123,21 @@ export function renderPriceChart(container: HTMLDivElement, data: MultiPriceHist
       .attr('stroke', lineSeries.color)
       .attr('stroke-width', 2.2)
       .attr('d', line);
+
+    const dots = svg
+      .append('g')
+      .selectAll('circle')
+      .data(lineSeries.points.filter((point) => Number.isFinite(point.value)))
+      .join('circle')
+      .attr('cx', (point) => x(point.month) ?? margin.left)
+      .attr('cy', (point) => y(point.value))
+      .attr('r', 2.6)
+      .attr('fill', lineSeries.color)
+      .attr('stroke', '#e2e8f0')
+      .attr('stroke-width', 0.7)
+      .attr('data-series', lineSeries.key) as d3.Selection<SVGCircleElement, PricePoint, SVGGElement, unknown>;
+
+    dotsGroups.push(dots);
   });
 
   const tickStep = Math.max(1, Math.ceil(months.length / 10));
@@ -128,12 +152,12 @@ export function renderPriceChart(container: HTMLDivElement, data: MultiPriceHist
         .tickValues(xTickValues)
         .tickFormat((value) => shortMonthLabel(String(value))),
     )
-    .call((axis) => axis.select('.domain').attr('stroke', '#cbd5e1'))
-    .call((axis) => axis.selectAll('.tick line').attr('stroke', '#cbd5e1'))
+    .call((axis) => axis.select('.domain').attr('stroke', 'rgba(148,163,184,0.35)'))
+    .call((axis) => axis.selectAll('.tick line').attr('stroke', 'rgba(148,163,184,0.35)'))
     .call((axis) =>
       axis
         .selectAll<SVGTextElement, string>('.tick text')
-        .attr('fill', '#475569')
+        .attr('fill', '#cbd5e1')
         .attr('font-size', 11)
         .attr('transform', 'rotate(-42)')
         .style('text-anchor', 'end'),
@@ -143,15 +167,15 @@ export function renderPriceChart(container: HTMLDivElement, data: MultiPriceHist
     .append('g')
     .attr('transform', `translate(${margin.left},0)`)
     .call(d3.axisLeft(y).ticks(6))
-    .call((axis) => axis.select('.domain').attr('stroke', '#94a3b8'))
-    .call((axis) => axis.selectAll('.tick line').attr('stroke', '#cbd5e1'))
-    .call((axis) => axis.selectAll('.tick text').attr('fill', '#475569').attr('font-size', 11));
+    .call((axis) => axis.select('.domain').attr('stroke', 'rgba(148,163,184,0.45)'))
+    .call((axis) => axis.selectAll('.tick line').attr('stroke', 'rgba(148,163,184,0.35)'))
+    .call((axis) => axis.selectAll('.tick text').attr('fill', '#cbd5e1').attr('font-size', 11));
 
   svg
     .append('text')
     .attr('x', 14)
     .attr('y', 14)
-    .attr('fill', '#475569')
+    .attr('fill', '#67e8f9')
     .attr('font-size', 12)
     .text(`USD / metric ton${data.isDemo ? ' (demo)' : ''}`);
 
@@ -171,7 +195,100 @@ export function renderPriceChart(container: HTMLDivElement, data: MultiPriceHist
       .attr('x', xOffset + 24)
       .attr('y', 11)
       .attr('font-size', 11)
-      .attr('fill', '#334155')
+      .attr('fill', '#e2e8f0')
       .text(lineSeries.label);
   });
+
+  const hoverLine = svg
+    .append('line')
+    .attr('stroke', 'rgba(103,232,249,0.6)')
+    .attr('stroke-width', 1.1)
+    .attr('y1', margin.top)
+    .attr('y2', height - margin.bottom)
+    .style('display', 'none');
+
+  const hoverDots = svg.append('g');
+  seriesStyles.forEach((style) => {
+    hoverDots
+      .append('circle')
+      .attr('r', 4.2)
+      .attr('fill', style.color)
+      .attr('stroke', '#f8fafc')
+      .attr('stroke-width', 1.2)
+      .attr('data-hover-series', style.key)
+      .style('display', 'none');
+  });
+
+  const xCenters = months.map((month) => x(month) ?? margin.left);
+  const hitboxes = months.map((month, index) => {
+    const center = xCenters[index];
+    const prev = index > 0 ? xCenters[index - 1] : center - 18;
+    const next = index < xCenters.length - 1 ? xCenters[index + 1] : center + 18;
+    const halfSpan = Math.max(10, (next - prev) / 2);
+    return {
+      month,
+      index,
+      x: center - halfSpan,
+      width: halfSpan * 2,
+    };
+  });
+
+  svg
+    .append('g')
+    .selectAll('rect')
+    .data(hitboxes)
+    .join('rect')
+    .attr('x', (box) => box.x)
+    .attr('y', margin.top)
+    .attr('width', (box) => box.width)
+    .attr('height', innerHeight)
+    .attr('fill', 'transparent')
+    .style('cursor', 'crosshair')
+    .on('mouseenter', () => {
+      hoverLine.style('display', 'block');
+      hoverDots.selectAll('circle').style('display', 'block');
+      tooltip.style('opacity', '1');
+    })
+    .on('mousemove', (event, box) => {
+      const center = xCenters[box.index];
+      hoverLine.attr('x1', center).attr('x2', center);
+
+      dotsGroups.forEach((group) => {
+        group.attr('r', (point) => (point.month === box.month ? 4 : 2.6));
+      });
+
+      const lines: string[] = [];
+      series.forEach((lineSeries) => {
+        const point = lineSeries.points[box.index];
+        if (!point || !Number.isFinite(point.value)) {
+          return;
+        }
+        hoverDots
+          .selectAll<SVGCircleElement, unknown>('circle')
+          .filter(function () {
+            return this.getAttribute('data-hover-series') === lineSeries.key;
+          })
+          .attr('cx', center)
+          .attr('cy', y(point.value));
+
+        lines.push(
+          `<div><span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:${lineSeries.color};margin-right:6px;"></span>${lineSeries.label}: ${point.value.toFixed(1)}</div>`,
+        );
+      });
+
+      const [pointerX, pointerY] = d3.pointer(event, container);
+      const tooltipLeft = Math.max(8, Math.min(width - 190, pointerX + 14));
+      const tooltipTop = Math.max(8, Math.min(height - 88, pointerY - 16));
+
+      tooltip
+        .style('left', `${tooltipLeft}px`)
+        .style('top', `${tooltipTop}px`)
+        .html(`<div class="chart-tooltip-title">${box.month}</div>${lines.join('')}`);
+    })
+    .on('mouseleave', () => {
+      hoverLine.style('display', 'none');
+      hoverDots.selectAll('circle').style('display', 'none');
+      tooltip.style('opacity', '0');
+      dotsGroups.forEach((group) => group.attr('r', 2.6));
+    });
 }

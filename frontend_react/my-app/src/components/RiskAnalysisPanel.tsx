@@ -5,11 +5,11 @@ import mockReport from '../mocks/analysis-report.json';
 /* ── colour helpers (1-5 scale) ───────────────────── */
 
 function scoreColor(score: number) {
-  if (score <= 1) return { text: 'text-green-600', bg: 'bg-green-500', ring: 'ring-green-400/30', badge: 'bg-green-50 text-green-700' };
-  if (score <= 2) return { text: 'text-emerald-500', bg: 'bg-emerald-500', ring: 'ring-emerald-400/30', badge: 'bg-emerald-50 text-emerald-700' };
-  if (score <= 3) return { text: 'text-amber-500', bg: 'bg-amber-500', ring: 'ring-amber-400/30', badge: 'bg-amber-50 text-amber-700' };
-  if (score <= 4) return { text: 'text-orange-500', bg: 'bg-orange-500', ring: 'ring-orange-400/30', badge: 'bg-orange-50 text-orange-700' };
-  return { text: 'text-red-500', bg: 'bg-red-500', ring: 'ring-red-400/30', badge: 'bg-red-50 text-red-700' };
+  if (score <= 1) return { text: 'text-emerald-300', bg: 'bg-emerald-400', ring: 'ring-emerald-400/35', badge: 'bg-emerald-400/15 text-emerald-300' };
+  if (score <= 2) return { text: 'text-green-300', bg: 'bg-green-400', ring: 'ring-green-400/35', badge: 'bg-green-400/15 text-green-300' };
+  if (score <= 3) return { text: 'text-amber-300', bg: 'bg-amber-400', ring: 'ring-amber-400/35', badge: 'bg-amber-400/15 text-amber-200' };
+  if (score <= 4) return { text: 'text-orange-300', bg: 'bg-orange-400', ring: 'ring-orange-400/35', badge: 'bg-orange-400/15 text-orange-200' };
+  return { text: 'text-rose-300', bg: 'bg-rose-400', ring: 'ring-rose-400/35', badge: 'bg-rose-400/15 text-rose-200' };
 }
 
 function riskLabel(score: number) {
@@ -29,8 +29,8 @@ const RISK_ICON: Record<string, string> = {
 };
 
 const ACTION_STYLE: Record<string, string> = {
-  sell: 'bg-red-50 text-red-700 border-red-200',
-  hold: 'bg-amber-50 text-amber-700 border-amber-200',
+  sell: 'bg-rose-400/15 text-rose-200 border-rose-400/40',
+  hold: 'bg-amber-300/15 text-amber-200 border-amber-300/40',
 };
 
 const MARKET_KEY = 'Market & Weather Risk Assessment';
@@ -60,15 +60,15 @@ function formatMarketValue(key: string, val: string | number | undefined): strin
 }
 
 function trendBadge(dir: string) {
-  if (dir === 'rising') return 'text-green-700 bg-green-50';
-  if (dir === 'falling') return 'text-red-700 bg-red-50';
-  return 'text-slate-600 bg-slate-50';
+  if (dir === 'rising') return 'text-emerald-300 bg-emerald-500/15';
+  if (dir === 'falling') return 'text-rose-300 bg-rose-500/15';
+  return 'text-slate-300 bg-slate-700/40';
 }
 
 function riskBadge(val: number) {
-  if (val <= 0.3) return 'text-green-700';
-  if (val <= 0.6) return 'text-amber-600';
-  return 'text-red-600';
+  if (val <= 0.3) return 'text-emerald-300';
+  if (val <= 0.6) return 'text-amber-300';
+  return 'text-rose-300';
 }
 
 /** Keys rendered in the left summary panel — skip in right detail grid. */
@@ -139,11 +139,11 @@ export function RiskAnalysisPanel({ bbox = '' }: RiskAnalysisPanelProps) {
     <section className="mx-auto w-full max-w-[1400px] px-5 pb-7 md:px-7">
       {/* Header row */}
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-bold text-slate-800">⚠️ AI Risk Analysis</h2>
+        <h2 className="text-lg font-bold tracking-[0.06em] text-slate-100">⚠️ AI Risk Analysis</h2>
         <button
           onClick={runAnalysis}
           disabled={loading}
-          className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60"
+          className="cyber-action flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold text-cyan-100 transition disabled:opacity-60"
         >
           {loading ? (
             <>
@@ -157,7 +157,7 @@ export function RiskAnalysisPanel({ bbox = '' }: RiskAnalysisPanelProps) {
 
       {/* Empty state */}
       {!report && !loading && (
-        <div className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
+        <div className="cyber-note p-5 text-sm text-slate-300">
           Click <strong>"Run Analysis"</strong> to generate an AI-powered risk report for the selected region.
           <span className="ml-1 text-xs text-slate-400">(bbox: {bbox || 'none'})</span>
         </div>
@@ -166,14 +166,14 @@ export function RiskAnalysisPanel({ bbox = '' }: RiskAnalysisPanelProps) {
       {/* Loading skeleton */}
       {loading && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
-          <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white p-8">
-            <div className="h-28 w-28 animate-pulse rounded-full bg-slate-100" />
-            <div className="h-4 w-32 animate-pulse rounded bg-slate-100" />
-            <div className="h-4 w-24 animate-pulse rounded bg-slate-100" />
+          <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-cyan-400/25 bg-slate-950/75 p-8">
+            <div className="h-28 w-28 animate-pulse rounded-full bg-slate-800/80" />
+            <div className="h-4 w-32 animate-pulse rounded bg-slate-800/80" />
+            <div className="h-4 w-24 animate-pulse rounded bg-slate-800/80" />
           </div>
           <div className="space-y-3">
             {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="h-24 animate-pulse rounded-xl border border-slate-200 bg-white" />
+              <div key={i} className="h-24 animate-pulse rounded-xl border border-cyan-400/20 bg-slate-950/75" />
             ))}
           </div>
         </div>
@@ -183,7 +183,7 @@ export function RiskAnalysisPanel({ bbox = '' }: RiskAnalysisPanelProps) {
       {report && !loading && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
           {/* ─── Left: Score + meta ─── */}
-          <div className="flex flex-col items-center gap-4 rounded-xl border border-slate-200 bg-white p-6">
+          <div className="flex flex-col items-center gap-4 rounded-xl border border-cyan-400/25 bg-slate-950/75 p-6 shadow-[0_0_24px_rgba(34,211,238,0.08)]">
             {/* Score circle */}
             <div
               className={`flex h-28 w-28 flex-col items-center justify-center rounded-full border-4 ${palette.ring} ring-[6px] transition-all duration-700`}
@@ -199,7 +199,7 @@ export function RiskAnalysisPanel({ bbox = '' }: RiskAnalysisPanelProps) {
 
             {/* Level badge */}
             {level && (
-              <p className="text-center text-sm font-medium text-slate-600">
+              <p className="text-center text-sm font-medium text-slate-200">
                 {RISK_ICON[level]} <strong>{level} Risk</strong>
               </p>
             )}
@@ -210,7 +210,7 @@ export function RiskAnalysisPanel({ bbox = '' }: RiskAnalysisPanelProps) {
                 <span>1</span>
                 <span>5</span>
               </div>
-              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800/80">
                 <div
                   className={`h-full rounded-full ${palette.bg} transition-all duration-1000 ease-out`}
                   style={{ width: `${Math.min(score, 5) * 20}%` }}
@@ -219,23 +219,23 @@ export function RiskAnalysisPanel({ bbox = '' }: RiskAnalysisPanelProps) {
             </div>
 
             {/* Crop type chip */}
-            <div className="flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="flex w-full items-center gap-2 rounded-lg border border-cyan-400/20 bg-slate-900/70 px-3 py-2">
               <span className="text-base">🌾</span>
               <div>
                 <div className="text-[10px] font-medium uppercase tracking-wider text-slate-400">Crop</div>
-                <div className="text-sm font-semibold capitalize text-slate-700">{report.crop_type}</div>
+                <div className="text-sm font-semibold capitalize text-slate-100">{report.crop_type}</div>
               </div>
               {report.crop_type_in_bbox ? (
-                <span className="ml-auto rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-bold text-green-700">✓ in bbox</span>
+                <span className="ml-auto rounded-full bg-emerald-400/20 px-2 py-0.5 text-[10px] font-bold text-emerald-300">✓ in bbox</span>
               ) : (
-                <span className="ml-auto rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-600">✗ not in bbox</span>
+                <span className="ml-auto rounded-full bg-rose-400/20 px-2 py-0.5 text-[10px] font-bold text-rose-300">✗ not in bbox</span>
               )}
             </div>
 
             {/* Recommended action */}
             <div
               className={`w-full rounded-lg border px-4 py-3 text-center text-sm font-bold uppercase tracking-wide ${
-                ACTION_STYLE[report.recommended_action] ?? 'bg-slate-50 text-slate-700 border-slate-200'
+                ACTION_STYLE[report.recommended_action] ?? 'bg-slate-800/60 text-slate-200 border-slate-600'
               }`}
             >
               Recommended: {report.recommended_action}
@@ -252,12 +252,12 @@ export function RiskAnalysisPanel({ bbox = '' }: RiskAnalysisPanelProps) {
             {allDetails.map(([key, value]) => (
               <article
                 key={key}
-                className="rounded-xl border border-slate-200 bg-white p-4 transition hover:shadow-sm"
+                className="rounded-xl border border-cyan-400/20 bg-slate-950/75 p-4 transition hover:shadow-[0_0_18px_rgba(34,211,238,0.1)]"
               >
-                <h3 className="mb-1.5 text-xs font-bold uppercase tracking-wide text-blue-500">
+                <h3 className="mb-1.5 text-xs font-bold uppercase tracking-wide text-cyan-300">
                   {key}
                 </h3>
-                <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-200">
                   {value}
                 </p>
               </article>
@@ -265,14 +265,14 @@ export function RiskAnalysisPanel({ bbox = '' }: RiskAnalysisPanelProps) {
 
             {/* ── Market & Weather Risk table ── */}
             {marketData && (
-              <article className="rounded-xl border border-slate-200 bg-white p-4 transition hover:shadow-sm">
-                <h3 className="mb-3 text-xs font-bold uppercase tracking-wide text-blue-500">
+              <article className="rounded-xl border border-cyan-400/20 bg-slate-950/75 p-4 transition hover:shadow-[0_0_18px_rgba(34,211,238,0.1)]">
+                <h3 className="mb-3 text-xs font-bold uppercase tracking-wide text-cyan-300">
                   Market &amp; Weather Risk Assessment
                 </h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b border-slate-100">
+                      <tr className="border-b border-slate-700/60">
                         <th className="pb-2 pr-4 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-400">Metric</th>
                         <th className="pb-2 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-400">Value</th>
                       </tr>
@@ -285,8 +285,8 @@ export function RiskAnalysisPanel({ bbox = '' }: RiskAnalysisPanelProps) {
                         const isTrend = k === 'trend_direction';
 
                         return (
-                          <tr key={k} className="border-b border-slate-50 last:border-0">
-                            <td className="py-1.5 pr-4 font-medium text-slate-600">{label}</td>
+                          <tr key={k} className="border-b border-slate-800/70 last:border-0">
+                            <td className="py-1.5 pr-4 font-medium text-slate-300">{label}</td>
                             <td className="py-1.5 text-right">
                               {isTrend && typeof v === 'string' ? (
                                 <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${trendBadge(v)}`}>
@@ -295,7 +295,7 @@ export function RiskAnalysisPanel({ bbox = '' }: RiskAnalysisPanelProps) {
                               ) : isRiskField && typeof v === 'number' ? (
                                 <span className={`font-semibold tabular-nums ${riskBadge(v)}`}>{formatted}</span>
                               ) : (
-                                <span className="font-semibold tabular-nums text-slate-800">{formatted}</span>
+                                <span className="font-semibold tabular-nums text-slate-100">{formatted}</span>
                               )}
                             </td>
                           </tr>
@@ -308,7 +308,7 @@ export function RiskAnalysisPanel({ bbox = '' }: RiskAnalysisPanelProps) {
             )}
 
             {allDetails.length === 0 && !marketData && (
-              <div className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-400">
+              <div className="rounded-xl border border-cyan-400/20 bg-slate-950/75 p-5 text-sm text-slate-400">
                 No additional details in this report.
               </div>
             )}

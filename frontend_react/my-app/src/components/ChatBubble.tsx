@@ -228,25 +228,25 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
     'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" rx="20" fill="%23e5e7eb"/><text x="20" y="25" text-anchor="middle" font-family="Arial" font-size="14" fill="%23111827">You</text></svg>';
 
   return (
-    <div className="fixed right-6 bottom-6 z-[1200]">
+    <div className="chat-floating-root fixed right-6 bottom-6 z-[1200]">
       {isOpen && (
         <div
-          className={`openai-chat mb-3 flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl ${
+          className={`openai-chat mb-3 flex flex-col overflow-hidden rounded-2xl border border-cyan-400/30 bg-slate-950/95 shadow-[0_0_32px_rgba(34,211,238,0.2)] ${
             isExpanded
               ? 'h-[82vh] w-[92vw] md:h-[78vh] md:w-[70vw] lg:h-[72vh] lg:w-[50vw]'
               : 'h-[500px] w-[360px] max-w-[92vw]'
           }`}
         >
-          <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-3">
+          <div className="shrink-0 border-b border-cyan-400/20 bg-slate-950/95 px-4 py-3">
             <div className="flex items-start justify-between gap-2">
               <div>
-                <p className="text-sm font-semibold text-slate-900">Agri Assistant</p>
-                <p className="text-xs text-slate-500">Dashboard help</p>
+                <p className="text-sm font-semibold text-cyan-200">Agri Assistant</p>
+                <p className="text-xs text-slate-400">Dashboard help</p>
               </div>
               <button
                 type="button"
                 onClick={() => setIsExpanded((prev) => !prev)}
-                className="rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
+                className="rounded-md border border-cyan-400/30 px-2 py-1 text-xs font-medium text-cyan-200 hover:bg-cyan-400/10"
                 aria-label={isExpanded ? 'Restore chat size' : 'Expand chat size'}
               >
                 {isExpanded ? 'Restore' : 'Expand'}
@@ -288,14 +288,14 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
               </ChatContainer>
             </MainContainer>
           </div>
-          <div className="shrink-0 border-t border-slate-200 bg-white p-3">
+          <div className="shrink-0 border-t border-cyan-400/20 bg-slate-950/95 p-3">
             {isTyping && (
-              <div className="mb-2 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+              <div className="mb-2 flex items-center gap-2 rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-2 py-1.5">
                 <span className="stage-spinner" />
-                <span className="text-[11px] font-medium text-slate-700">{currentStage ?? 'Thinking...'}</span>
+                <span className="text-[11px] font-medium text-cyan-100">{currentStage ?? 'Thinking...'}</span>
               </div>
             )}
-            <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2 py-2">
+            <div className="flex items-center gap-2 rounded-xl border border-cyan-400/20 bg-slate-900/80 px-2 py-2">
               <input
                 type="text"
                 value={draft}
@@ -308,13 +308,13 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
                   }
                 }}
                 placeholder="Ask anything..."
-                className="w-full bg-transparent px-2 text-sm text-slate-900 outline-none placeholder:text-slate-400"
+                className="w-full bg-transparent px-2 text-sm text-slate-100 outline-none placeholder:text-slate-500"
               />
               <button
                 type="button"
                 onClick={handleSend}
                 disabled={isTyping}
-                className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800"
+                className="rounded-lg border border-cyan-400/35 bg-gradient-to-r from-cyan-900/80 to-fuchsia-900/80 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:from-cyan-800/90 hover:to-fuchsia-800/90"
               >
                 {isTyping ? 'Waiting' : 'Send'}
               </button>
@@ -326,7 +326,7 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
       <button
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
-        className="flex h-14 w-14 items-center justify-center rounded-full border border-slate-800 bg-slate-900 text-sm font-semibold text-white shadow-lg transition hover:bg-slate-800"
+        className="flex h-14 w-14 items-center justify-center rounded-full border border-cyan-400/45 bg-gradient-to-br from-cyan-900/90 to-fuchsia-900/85 text-sm font-semibold text-cyan-100 shadow-[0_0_20px_rgba(34,211,238,0.4)] transition hover:from-cyan-800/95 hover:to-fuchsia-800/90"
         aria-label="Toggle chat"
       >
         {isOpen ? '×' : 'AI'}

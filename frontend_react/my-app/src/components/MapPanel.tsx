@@ -61,8 +61,8 @@ export function MapPanel({ bbox, legendItems }: MapPanelProps) {
         <MapContainer center={[46.6, 2.5]} zoom={6} className="h-full w-full">
           <AutoFitBounds bounds={bounds} />
           <TileLayer
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            attribution="&copy; OpenStreetMap contributors"
+            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+            attribution="&copy; OpenStreetMap contributors &copy; CARTO"
           />
           <WMSTileLayer
             url={CLMS_WMS_URL}
@@ -76,10 +76,12 @@ export function MapPanel({ bbox, legendItems }: MapPanelProps) {
             <Rectangle
               bounds={bounds}
               pathOptions={{
-                color: '#e11d48',
-                weight: 2,
-                fillOpacity: 0.1,
-                dashArray: '6 4',
+                className: 'cyber-bbox-rect',
+                color: '#ff4fd8',
+                weight: 2.4,
+                fillColor: '#f72585',
+                fillOpacity: 0.12,
+                dashArray: '8 6',
               }}
             />
           )}
