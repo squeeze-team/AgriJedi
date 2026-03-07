@@ -105,7 +105,7 @@ class AlertDispatch(TypedDict, total=False):
 class QueryAnalysisResult(TypedDict, total=False):
     field_name: str | None
     need_geo: bool
-    central_lat_lon: List[float]
+    bbox: List[float]
     crop_type: str
     analysis_report: str
 
@@ -114,7 +114,6 @@ class AgriState(TypedDict, total=False):
     user_query: str
     field_name: str | None
     need_geo: bool
-    central_lat_lon: List[float]
     location_name: str
     crop_type: str
     query_analysis_report: str
@@ -598,9 +597,9 @@ if not LOGGER.handlers:
 AGENT_PROMPTS: Dict[str, AgentPrompt] = {
     "query_analysis_agent": AgentPrompt(
         role="Agricultural Query Analyst",
-        context="You extract farm location mode (field-name or coordinate) and crop from user text.",
+        context="You extract farm location mode (field-name which is used by OpenStreetMap or bbox - [min_lon,min_lat,max_lon,max_lat]) and crop from user text.",
         prompt=(
-            "Extract field_name, need_geo, central_lat_lon, crop_type, and a concise analysis report from the user query."
+            "Extract field_name, need_geo, bbox, crop_type, and a concise analysis report from the user query."
         ),
     ),
     "geocoding_agent": AgentPrompt(
@@ -901,7 +900,7 @@ def known_bbox_for_location(location_name: str) -> Dict[str, Any] | None:
         "rouen france": [1.00, 49.35, 1.20, 49.50],
         "reims france": [3.80, 49.10, 4.00, 49.30],
         "bordeaux france": [-0.60, 44.80, -0.40, 44.90],
-        "rhone valley france": [4.50, 45.50, 4.80, 45.80],
+        "rhone valley france": [4.67, 44.71, 4.97, 45.01],
     }
     bbox = presets.get(canonical)
     if not bbox:
@@ -932,6 +931,52 @@ def extract_lat_lon_from_text(text: str) -> List[float] | None:
     return None
 
 
+def normalize_bbox(bbox_raw: Any) -> List[float] | None:
+    if not isinstance(bbox_raw, list) or len(bbox_raw) < 4:
+        return None
+    min_lon = parse_float(bbox_raw[0])
+    min_lat = parse_float(bbox_raw[1])
+    max_lon = parse_float(bbox_raw[2])
+    max_lat = parse_float(bbox_raw[3])
+    if None in {min_lon, min_lat, max_lon, max_lat}:
+        return None
+    if not (-180 <= min_lon <= 180 and -180 <= max_lon <= 180):
+        return None
+    if not (-90 <= min_lat <= 90 and -90 <= max_lat <= 90):
+        return None
+    if max_lon <= min_lon or max_lat <= min_lat:
+        return None
+    return [
+        round(min_lon, 4),
+        round(min_lat, 4),
+        round(max_lon, 4),
+        round(max_lat, 4),
+    ]
+
+
+def extract_bbox_from_text(text: str) -> List[float] | None:
+    compact = re.sub(r"\s+", " ", text.strip())
+    patterns = [
+        r"\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]",
+        r"\bbbox\b\s*(?:=|:)?\s*(-?\d+(?:\.\d+)?)\s*[, ]+\s*(-?\d+(?:\.\d+)?)\s*[, ]+\s*(-?\d+(?:\.\d+)?)\s*[, ]+\s*(-?\d+(?:\.\d+)?)",
+        r"(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, compact, flags=re.IGNORECASE)
+        if not match:
+            continue
+        candidate = [
+            parse_float(match.group(1)),
+            parse_float(match.group(2)),
+            parse_float(match.group(3)),
+            parse_float(match.group(4)),
+        ]
+        normalized = normalize_bbox(candidate)
+        if normalized:
+            return normalized
+    return None
+
+
 def bbox_from_center_lat_lon(center_lat: float, center_lon: float) -> List[float]:
     half_size = parse_float(os.getenv("GEO_FIXED_HALF_SIZE_DEG", "0.1")) or 0.1
     min_lon = round(center_lon - half_size, 4)
@@ -955,16 +1000,29 @@ def fallback_query_analysis(
 ) -> QueryAnalysisResult:
     query = user_query.strip()
     crop = normalize_crop_type(infer_crop_type_from_query(query, fallback_crop))
-    central = extract_lat_lon_from_text(query)
-    if central:
+    parsed_bbox = extract_bbox_from_text(query)
+    if parsed_bbox:
         return {
             "field_name": None,
             "need_geo": False,
-            "central_lat_lon": central,
+            "bbox": parsed_bbox,
             "crop_type": crop,
             "analysis_report": (
-                f"Parsed coordinates lat {central[0]}, lon {central[1]} from user query "
-                f"for crop {crop}. Geocoding skipped."
+                f"Parsed bbox {parsed_bbox} from user query for crop {crop}. Geocoding skipped."
+            ),
+        }
+
+    central = extract_lat_lon_from_text(query)
+    if central:
+        parsed_bbox = bbox_from_center_lat_lon(central[0], central[1])
+        return {
+            "field_name": None,
+            "need_geo": False,
+            "bbox": parsed_bbox,
+            "crop_type": crop,
+            "analysis_report": (
+                f"Parsed center coordinates lat {central[0]}, lon {central[1]} and converted "
+                f"to bbox {parsed_bbox} for crop {crop}. Geocoding skipped."
             ),
         }
 
@@ -1011,8 +1069,8 @@ def build_llm_query_analysis(
         f"Role: {AGENT_PROMPTS['query_analysis_agent'].role}\n"
         f"Context: {AGENT_PROMPTS['query_analysis_agent'].context}\n"
         f"Instruction: {AGENT_PROMPTS['query_analysis_agent'].prompt}\n"
-        "Return valid JSON only with keys: field_name, need_geo, central_lat_lon, crop_type, analysis_report. "
-        "If query has latitude/longitude, set need_geo=false, field_name=null, and central_lat_lon=[lat,lon]. "
+        "Return valid JSON only with keys: field_name, need_geo, bbox, crop_type, analysis_report. "
+        "If query has bbox, set need_geo=false, field_name=null, and bbox=[min_lon,min_lat,max_lon,max_lat]. "
         "If query does not have coordinates, set need_geo=true and provide field_name."
     )
     user_prompt = (
@@ -1061,13 +1119,7 @@ def build_llm_query_analysis(
     field_name_raw = parsed.get("field_name")
     field_name = None if field_name_raw is None else normalize_location_name(str(field_name_raw).strip())
     need_geo = parse_bool(parsed.get("need_geo", True), default=True)
-    central_raw = parsed.get("central_lat_lon")
-    central_lat_lon: List[float] | None = None
-    if isinstance(central_raw, list) and len(central_raw) >= 2:
-        lat = parse_float(central_raw[0])
-        lon = parse_float(central_raw[1])
-        if lat is not None and lon is not None and -90 <= lat <= 90 and -180 <= lon <= 180:
-            central_lat_lon = [round(lat, 6), round(lon, 6)]
+    bbox = normalize_bbox(parsed.get("bbox"))
     analysis_report = str(parsed.get("analysis_report") or "").strip()
 
     if not crop_type:
@@ -1076,14 +1128,18 @@ def build_llm_query_analysis(
         analysis_report = "Parsed query intent."
 
     if not need_geo:
-        if not central_lat_lon:
-            central_lat_lon = extract_lat_lon_from_text(user_query)
-        if not central_lat_lon:
+        if not bbox:
+            bbox = extract_bbox_from_text(user_query)
+        if not bbox:
+            central = extract_lat_lon_from_text(user_query)
+            if central:
+                bbox = bbox_from_center_lat_lon(central[0], central[1])
+        if not bbox:
             return None
         return {
             "field_name": None,
             "need_geo": False,
-            "central_lat_lon": central_lat_lon,
+            "bbox": bbox,
             "crop_type": crop_type,
             "analysis_report": analysis_report,
         }
@@ -1124,7 +1180,7 @@ def query_analysis_node(state: AgriState) -> Dict[str, Any]:
         else:
             result["need_geo"] = False
             result["field_name"] = None
-            result["central_lat_lon"] = llm_result["central_lat_lon"]
+            result["bbox"] = llm_result["bbox"]
         return result
 
     fallback_result = fallback_query_analysis(user_query, fallback_crop)
@@ -1147,7 +1203,7 @@ def query_analysis_node(state: AgriState) -> Dict[str, Any]:
     else:
         result["need_geo"] = False
         result["field_name"] = None
-        result["central_lat_lon"] = fallback_result["central_lat_lon"]
+        result["bbox"] = fallback_result["bbox"]
     return result
 
 
@@ -1156,7 +1212,7 @@ def validation_node(state: AgriState) -> Dict[str, Any]:
     crop_type = normalize_crop_type(state.get("crop_type", "wheat"))
     need_geo = bool(state.get("need_geo", True))
     field_name = (state.get("field_name") or "").strip()
-    central = state.get("central_lat_lon") or []
+    parsed_bbox = state.get("bbox") or []
 
     issues: List[str] = []
     if crop_type not in allowed_crops:
@@ -1165,13 +1221,8 @@ def validation_node(state: AgriState) -> Dict[str, Any]:
         if len(field_name) < 3:
             issues.append("field_name_missing_or_too_short")
     else:
-        if not isinstance(central, list) or len(central) < 2:
-            issues.append("central_lat_lon_missing")
-        else:
-            lat = parse_float(central[0])
-            lon = parse_float(central[1])
-            if lat is None or lon is None or not (-90 <= lat <= 90 and -180 <= lon <= 180):
-                issues.append("central_lat_lon_invalid")
+        if normalize_bbox(parsed_bbox) is None:
+            issues.append("bbox_missing_or_invalid")
 
     if issues:
         return {
@@ -1184,12 +1235,15 @@ def validation_node(state: AgriState) -> Dict[str, Any]:
             ),
         }
 
-    return {
+    response: Dict[str, Any] = {
         "crop_type": crop_type,
         "need_geo": need_geo,
         "query_validation_status": "validated",
         "needs_clarification": False,
     }
+    if not need_geo:
+        response["bbox"] = normalize_bbox(parsed_bbox)
+    return response
 
 
 def clarification_node(state: AgriState) -> Dict[str, Any]:
@@ -1201,7 +1255,7 @@ def clarification_node(state: AgriState) -> Dict[str, Any]:
     user_query = state.get("user_query", "")
     field_name = state.get("field_name", "Unknown")
     need_geo = state.get("need_geo", True)
-    central = state.get("central_lat_lon", [])
+    parsed_bbox = state.get("bbox", [])
     crop_type = state.get("crop_type", "Unknown")
     return {
         "final_advisory": "\n".join(
@@ -1210,11 +1264,11 @@ def clarification_node(state: AgriState) -> Dict[str, Any]:
                 f"User query: {user_query}",
                 f"Parsed field_name: {field_name}",
                 f"need_geo: {need_geo}",
-                f"Parsed central_lat_lon: {central}",
+                f"Parsed bbox: {parsed_bbox}",
                 f"Parsed crop: {crop_type}",
                 f"Query analysis report: {report}",
                 f"Reason: {clarification}",
-                "Please provide either a field/location name or explicit latitude/longitude, plus crop type.",
+                "Please provide either a field/location name or an explicit bbox [min_lon,min_lat,max_lon,max_lat], plus crop type.",
             ]
         )
     }
@@ -1237,7 +1291,7 @@ def compose_orchestrator_facts(state: AgriState, final_action: str) -> str:
             f"Query analysis debug: {state.get('query_analysis_debug', 'n/a')}",
             f"Field name: {state.get('field_name')}",
             f"need_geo: {state.get('need_geo', True)}",
-            f"central_lat_lon: {state.get('central_lat_lon')}",
+            f"parsed_bbox: {state.get('bbox') if not state.get('need_geo', True) else None}",
             f"Location: {state['location_name']} ({state['country_code']})",
             f"BBox: {state['bbox']}",
             f"Geocode debug: {state['geocode_debug']}",
@@ -1308,7 +1362,7 @@ def crop_type_detected_in_bbox(state: AgriState) -> bool:
     selection_reason = str(yield_data.get("selection_reason") or "")
     status = str(crop_health.get("status") or "").strip().lower()
     label = str(crop_health.get("yield_index_label") or "").strip().lower()
-    if selection_reason == "requested_crop_not_detected":
+    if selection_reason in {"requested_crop_not_detected", "query_profile_only_match"}:
         return False
     if "not detected" in status or "not detected" in label:
         return False
@@ -1668,32 +1722,24 @@ def build_llm_advisory(
 
 def geocode_node(state: AgriState) -> Dict[str, Any]:
     if not state.get("need_geo", True):
-        central = state.get("central_lat_lon") or []
-        if not isinstance(central, list) or len(central) < 2:
+        parsed_bbox = normalize_bbox(state.get("bbox"))
+        if parsed_bbox is None:
             return {
                 "geocode_status": "failed",
-                "geocode_error": "central_lat_lon_missing",
+                "geocode_error": "bbox_missing_or_invalid",
                 "needs_clarification": True,
-                "clarification_message": "need_geo is false but central_lat_lon is missing.",
-                "geocode_debug": "failed_bbox_from_center_missing_coords",
-            }
-        lat = parse_float(central[0])
-        lon = parse_float(central[1])
-        if lat is None or lon is None or not (-90 <= lat <= 90 and -180 <= lon <= 180):
-            return {
-                "geocode_status": "failed",
-                "geocode_error": "central_lat_lon_invalid",
-                "needs_clarification": True,
-                "clarification_message": "need_geo is false but central_lat_lon is invalid.",
-                "geocode_debug": "failed_bbox_from_center_invalid_coords",
+                "clarification_message": "need_geo is false but bbox is missing or invalid.",
+                "geocode_debug": "failed_bbox_from_query_invalid_or_missing",
             }
 
-        bbox = bbox_from_center_lat_lon(lat, lon)
+        min_lon, min_lat, max_lon, max_lat = parsed_bbox
+        center_lat = (min_lat + max_lat) / 2
+        center_lon = (min_lon + max_lon) / 2
         return {
             "country_code": "FR",
-            "location_name": f"lat {lat:.4f}, lon {lon:.4f}",
-            "bbox": bbox,
-            "geocode_debug": "bbox_from_central_lat_lon_fixed_size",
+            "location_name": f"bbox center lat {center_lat:.4f}, lon {center_lon:.4f}",
+            "bbox": parsed_bbox,
+            "geocode_debug": "bbox_from_user_query",
             "geocode_status": "resolved",
         }
 
@@ -1739,15 +1785,25 @@ def geocode_node(state: AgriState) -> Dict[str, Any]:
 
 def select_crop_from_yield_response(
     crops: Dict[str, Any],
+    crop_profiles: Dict[str, Any],
     crop_type: str,
-) -> tuple[str, Dict[str, Any], str]:
+) -> tuple[str, Dict[str, Any], Dict[str, Any], str]:
     preferred = map_crop_type_to_yield_group(crop_type)
-    if preferred in crops and isinstance(crops[preferred], dict):
-        return preferred, crops[preferred], "query_crop_match"
+    crop_payload = crops.get(preferred)
+    profile_payload = crop_profiles.get(preferred)
+    has_crop_payload = isinstance(crop_payload, dict) and bool(crop_payload)
+    has_profile_payload = isinstance(profile_payload, dict) and bool(profile_payload)
+
+    if has_crop_payload and has_profile_payload:
+        return preferred, crop_payload, profile_payload, "query_crop_and_profile_match"
+    if has_crop_payload:
+        return preferred, crop_payload, {}, "query_crop_match"
+    if has_profile_payload:
+        return preferred, {}, profile_payload, "query_profile_only_match"
 
     # Do not cross-fallback to a different crop group when the requested crop
     # is absent in the backend payload for this bbox/date.
-    return preferred, {}, "requested_crop_not_detected"
+    return preferred, {}, {}, "requested_crop_not_detected"
 
 
 def build_no_crop_detected_health(
@@ -1777,17 +1833,65 @@ def build_no_crop_detected_health(
     }
 
 
+def month_from_date_range(date_range: str) -> int | None:
+    latest = date_range.split("/")[-1].strip() if "/" in date_range else date_range.strip()
+    if not latest:
+        return None
+    try:
+        return datetime.fromisoformat(latest).month
+    except ValueError:
+        return None
+
+
+def build_profile_context(
+    crop_profile: Dict[str, Any],
+    date_range: str,
+) -> Dict[str, Any]:
+    if not isinstance(crop_profile, dict):
+        return {}
+
+    context: Dict[str, Any] = {}
+    peak_months = crop_profile.get("peak_months")
+    optimal_ndvi_range = crop_profile.get("optimal_ndvi_range")
+    stress_threshold = parse_float(crop_profile.get("stress_threshold"))
+    baseline_by_month = crop_profile.get("baseline_by_month")
+    month = month_from_date_range(date_range)
+    month_baseline = None
+
+    if isinstance(baseline_by_month, dict) and month is not None:
+        month_baseline = parse_float(
+            baseline_by_month.get(str(month), baseline_by_month.get(month))
+        )
+
+    if isinstance(peak_months, list):
+        context["peak_months"] = peak_months
+    if isinstance(optimal_ndvi_range, list):
+        context["optimal_ndvi_range"] = optimal_ndvi_range
+    if stress_threshold is not None:
+        context["stress_threshold"] = stress_threshold
+    if month_baseline is not None:
+        context["ndvi_baseline_used"] = month_baseline
+    if isinstance(baseline_by_month, dict):
+        context["baseline_by_month"] = baseline_by_month
+    return context
+
+
 def build_crop_health_from_yield_payload(
     bbox: List[float],
     selected_group: str,
     selected_crop_payload: Dict[str, Any],
+    selected_crop_profile: Dict[str, Any],
     date_range: str,
 ) -> CropHealthData:
-    ndvi = round(parse_float(selected_crop_payload.get("ndvi_mean")) or 0.0, 3)
-    yield_index = round(parse_float(selected_crop_payload.get("yield_index")) or 0.0, 3)
-    yield_index_label = str(selected_crop_payload.get("yield_index_label") or "Unknown")
-    area_pct = round(parse_float(selected_crop_payload.get("area_pct")) or 0.0, 1)
-    prediction = selected_crop_payload.get("yield_prediction")
+    profile_context = build_profile_context(selected_crop_profile, date_range)
+    merged_payload = dict(profile_context)
+    merged_payload.update(selected_crop_payload)
+
+    ndvi = round(parse_float(merged_payload.get("ndvi_mean")) or 0.0, 3)
+    yield_index = round(parse_float(merged_payload.get("yield_index")) or 0.0, 3)
+    yield_index_label = str(merged_payload.get("yield_index_label") or "Unknown")
+    area_pct = round(parse_float(merged_payload.get("area_pct")) or 0.0, 1)
+    prediction = merged_payload.get("yield_prediction")
     predicted_yield = None
     anomaly_pct = None
     target_year = None
@@ -1808,7 +1912,7 @@ def build_crop_health_from_yield_payload(
         "leaf_area_index": round(max(0.4, ndvi * 3.2), 2),
         "status": status,
         "selected_crop_group": selected_group,
-        "selected_crop_label": str(selected_crop_payload.get("label") or selected_group),
+        "selected_crop_label": str(merged_payload.get("label") or selected_group),
         "yield_index": yield_index,
         "yield_index_label": yield_index_label,
         "predicted_yield_t_ha": round(predicted_yield, 2) if predicted_yield is not None else 0.0,
@@ -1821,7 +1925,11 @@ def build_crop_health_from_yield_payload(
         "cloud_cover_pct": 0.0,
         "cropland_coverage_pct": area_pct,
         "segmented_area_ha": area_ha,
-        "source": API_CONFIG.yield_analysis,
+        "source": (
+            f"{API_CONFIG.yield_analysis} (crop+profile)"
+            if selected_crop_profile
+            else API_CONFIG.yield_analysis
+        ),
     }
 
 
@@ -1837,18 +1945,29 @@ def yield_analysis_node(state: AgriState) -> Dict[str, Any]:
 
     if isinstance(live_payload, dict):
         crops_payload = live_payload.get("crops")
-        if isinstance(crops_payload, dict) and crops_payload:
-            selected_group, selected_crop_payload, selection_reason = select_crop_from_yield_response(
-                crops_payload,
+        crop_profiles_payload = live_payload.get("crop_profiles")
+        crops_map = crops_payload if isinstance(crops_payload, dict) else {}
+        crop_profiles_map = crop_profiles_payload if isinstance(crop_profiles_payload, dict) else {}
+        if crops_map or crop_profiles_map:
+            selected_group, selected_crop_payload, selected_crop_profile, selection_reason = select_crop_from_yield_response(
+                crops_map,
+                crop_profiles_map,
                 crop_type,
             )
             date_range = str(live_payload.get("date_range") or "")
-            if selection_reason == "requested_crop_not_detected":
+            if selection_reason in {"requested_crop_not_detected", "query_profile_only_match"}:
                 crop_health = build_no_crop_detected_health(
                     selected_group=selected_group,
                     date_range=date_range,
                 )
-                message = f"{selected_group} not detected in this bbox/date window."
+                profile_context = build_profile_context(selected_crop_profile, date_range)
+                if selection_reason == "query_profile_only_match":
+                    message = (
+                        f"{selected_group} not detected in this bbox/date window; "
+                        "crop profile exists but no crop metrics were returned."
+                    )
+                else:
+                    message = f"{selected_group} not detected in this bbox/date window."
                 return {
                     "crop_health_data": crop_health,
                     "yield_analysis_data": {
@@ -1858,6 +1977,8 @@ def yield_analysis_node(state: AgriState) -> Dict[str, Any]:
                         "total_classified_pixels": live_payload.get("total_classified_pixels"),
                         "selected_crop_group": selected_group,
                         "selected_crop": {},
+                        "selected_crop_profile": selected_crop_profile if selected_crop_profile else {},
+                        "selected_crop_profile_context": profile_context,
                         "selection_reason": selection_reason,
                         "summary": message,
                     },
@@ -1868,8 +1989,10 @@ def yield_analysis_node(state: AgriState) -> Dict[str, Any]:
                 bbox=bbox,
                 selected_group=selected_group,
                 selected_crop_payload=selected_crop_payload,
+                selected_crop_profile=selected_crop_profile,
                 date_range=date_range,
             )
+            selected_profile_context = build_profile_context(selected_crop_profile, date_range)
             return {
                 "crop_health_data": crop_health,
                 "yield_analysis_data": {
@@ -1879,6 +2002,8 @@ def yield_analysis_node(state: AgriState) -> Dict[str, Any]:
                     "total_classified_pixels": live_payload.get("total_classified_pixels"),
                     "selected_crop_group": selected_group,
                     "selected_crop": selected_crop_payload,
+                    "selected_crop_profile": selected_crop_profile if selected_crop_profile else {},
+                    "selected_crop_profile_context": selected_profile_context,
                     "selection_reason": selection_reason,
                     "summary": live_payload.get("summary", ""),
                 },
@@ -2446,7 +2571,7 @@ def main() -> None:
     print_architecture_summary()
     try:
         state = run_agri_mind(
-            user_query="Assess wheat risk and selling strategy at 1.0, 47.5, 2.6, 48.6",
+            user_query="Assess wheat risk and selling strategy at 4.67, 44.71, 4.97, 45.01",
             run_mode="analysis",
         )
     except RuntimeError as exc:

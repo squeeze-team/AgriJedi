@@ -41,6 +41,10 @@ function createAssistantReply(text: string) {
   return 'I can help you navigate map, weather, price, prediction, and crop analysis modules.';
 }
 
+function svgToDataUri(svg: string) {
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
 export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -222,10 +226,38 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
     setDraft('');
   };
 
-  const assistantAvatar =
-    'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" rx="20" fill="%23111827"/><text x="20" y="25" text-anchor="middle" font-family="Arial" font-size="14" fill="white">AI</text></svg>';
-  const userAvatar =
-    'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" rx="20" fill="%23e5e7eb"/><text x="20" y="25" text-anchor="middle" font-family="Arial" font-size="14" fill="%23111827">You</text></svg>';
+  const assistantAvatar = svgToDataUri(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+      <defs>
+        <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#06b6d4"/>
+          <stop offset="100%" stop-color="#7c3aed"/>
+        </linearGradient>
+      </defs>
+      <circle cx="20" cy="20" r="19" fill="#091125" stroke="url(#g1)" stroke-width="2"/>
+      <rect x="11.5" y="12.5" width="17" height="14" rx="4" fill="#0b1730" stroke="#22d3ee" stroke-width="1.2"/>
+      <circle cx="17" cy="19.5" r="1.7" fill="#22d3ee"/>
+      <circle cx="23" cy="19.5" r="1.7" fill="#a78bfa"/>
+      <rect x="16.5" y="24.3" width="7" height="1.5" rx="0.75" fill="#22d3ee"/>
+      <line x1="20" y1="10" x2="20" y2="12.5" stroke="#22d3ee" stroke-width="1.2"/>
+      <circle cx="20" cy="9.2" r="1.2" fill="#22d3ee"/>
+    </svg>`,
+  );
+  const userAvatar = svgToDataUri(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+      <defs>
+        <linearGradient id="g2" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#38bdf8"/>
+          <stop offset="100%" stop-color="#d946ef"/>
+        </linearGradient>
+      </defs>
+      <circle cx="20" cy="20" r="19" fill="#0a1228" stroke="url(#g2)" stroke-width="2"/>
+      <circle cx="20" cy="15.5" r="5.2" fill="#dbeafe"/>
+      <path d="M10.5 31.5c1.8-5 5.2-7.5 9.5-7.5s7.7 2.5 9.5 7.5" fill="#dbeafe"/>
+      <path d="M14 11.2c2-2 4.2-3 6-3 1.8 0 4 1 6 3" fill="none" stroke="#22d3ee" stroke-width="1.2" opacity="0.8"/>
+      <circle cx="30.6" cy="9.6" r="1.2" fill="#22d3ee"/>
+    </svg>`,
+  );
 
   return (
     <div className="chat-floating-root fixed right-6 bottom-6 z-[1200]">
