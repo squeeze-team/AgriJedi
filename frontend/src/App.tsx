@@ -14,10 +14,12 @@ import {
   fetchAllPriceHistory,
   fetchCropAnalysis,
   fetchWeather,
+  fetchWeatherForecast,
   type CropAnalysisResponse,
   type MultiPriceHistoryData,
   type SatelliteLayer,
   type WeatherData,
+  type WeatherForecastData,
 } from './services/api';
 
 interface SatelliteViewState {
@@ -59,6 +61,7 @@ function createInitialSatelliteViews(): Record<SatelliteLayer, SatelliteViewStat
 
 function App() {
   const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
+  const [weatherForecast, setWeatherForecast] = useState<WeatherForecastData | null>(null);
   const [priceData, setPriceData] = useState<MultiPriceHistoryData | null>(null);
 
   const [bbox, setBbox] = useState(defaultBbox);
@@ -92,6 +95,10 @@ function App() {
 
   useEffect(() => {
     fetchWeather().then(setWeatherData);
+  }, []);
+
+  useEffect(() => {
+    fetchWeatherForecast(7).then(setWeatherForecast);
   }, []);
 
   useEffect(() => {
@@ -182,7 +189,7 @@ function App() {
 
       <main className="mx-auto grid w-full max-w-[1400px] grid-cols-1 gap-4 px-5 py-5 md:px-7 lg:grid-cols-2">
         <MapPanel bbox={mapBbox} legendItems={dynamicLegendItems} />
-        <WeatherChartPanel data={weatherData} />
+        <WeatherChartPanel data={weatherData} forecast={weatherForecast} />
         <PriceChartPanel data={priceData} />
         <FranceEventsPanel />
       </main>

@@ -7,6 +7,7 @@ Variables: PRECTOTCORR, T2M, T2M_MAX
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Any
 
 import pandas as pd
@@ -245,3 +246,98 @@ def compute_weather_features(start_date: str, end_date: str) -> dict:
         "heatwave_days": heatwave_days,
         "drought_proxy": round(float(drought_proxy), 4),
     }
+
+
+def _bundled_open_meteo_forecast(days: int) -> dict:
+    """Fallback 7-day-like forecast for frontend resilience."""
+    base = date.today()
+    tmax = [11.0, 13.0, 14.0, 12.0, 10.0, 9.0, 11.0, 13.0, 14.0, 12.0]
+    tmin = [4.0, 5.0, 6.0, 5.0, 3.0, 2.0, 4.0, 5.0, 6.0, 5.0]
+    precip = [1.2, 0.0, 3.5, 6.2, 0.8, 0.0, 2.1, 0.3, 1.8, 4.0]
+    wind = [17.0, 14.0, 20.0, 23.0, 16.0, 13.0, 18.0, 15.0, 14.0, 19.0]
+    weather_codes = [3, 1, 61, 63, 2, 0, 3, 1, 2, 61]
+
+    return {
+        "source": "open-meteo-bundled-fallback",
+        "latitude": 46.603354,
+        "longitude": 1.888334,
+        "timezone": "Europe/Paris",
+        "days": [
+            {
+                "date": (base + timedelta(days=i)).isoformat(),
+                "temp_max_c": tmax[i],
+                "temp_min_c": tmin[i],
+                "precip_mm": precip[i],
+                "wind_kmh": wind[i],
+                "weather_code": weather_codes[i],
+            }
+            for i in range(max(1, min(days, 10)))
+        ],
+    }
+
+
+def get_open_meteo_france_forecast(days: int = 7, lat: float = 46.603354, lon: float = 1.888334) -> dict:
+    """
+    Fetch France 7-day forecast from Open-Meteo.
+
+    Returns
+    -------
+    dict:
+      - source, latitude, longitude, timezone
+      - days: [{date, temp_max_c, temp_min_c, precip_mm, wind_kmh, weather_code}, ...]
+    """
+    safe_days = max(1, min(days, 10))
+    base_url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "forecast_days": safe_days,
+        "timezone": "Europe/Paris",
+        "daily": ",".join(
+            [
+                "weather_code",
+                "temperature_2m_max",
+                "temperature_2m_min",
+                "precipitation_sum",
+                "wind_speed_10m_max",
+            ]
+        ),
+    }
+
+    try:
+        resp = requests.get(base_url, params=params, timeout=30)
+        resp.raise_for_status()
+        payload = resp.json()
+        daily = payload.get("daily", {})
+        dates = daily.get("time", []) or []
+        tmax = daily.get("temperature_2m_max", []) or []
+        tmin = daily.get("temperature_2m_min", []) or []
+        precip = daily.get("precipitation_sum", []) or []
+        wind = daily.get("wind_speed_10m_max", []) or []
+        weather_codes = daily.get("weather_code", []) or []
+
+        if not dates:
+            return _bundled_open_meteo_forecast(safe_days)
+
+        out_days = []
+        for idx, day in enumerate(dates):
+            out_days.append(
+                {
+                    "date": str(day),
+                    "temp_max_c": round(float(tmax[idx]), 1) if idx < len(tmax) and tmax[idx] is not None else None,
+                    "temp_min_c": round(float(tmin[idx]), 1) if idx < len(tmin) and tmin[idx] is not None else None,
+                    "precip_mm": round(float(precip[idx]), 1) if idx < len(precip) and precip[idx] is not None else None,
+                    "wind_kmh": round(float(wind[idx]), 1) if idx < len(wind) and wind[idx] is not None else None,
+                    "weather_code": int(weather_codes[idx]) if idx < len(weather_codes) and weather_codes[idx] is not None else None,
+                }
+            )
+
+        return {
+            "source": "open-meteo",
+            "latitude": payload.get("latitude", lat),
+            "longitude": payload.get("longitude", lon),
+            "timezone": payload.get("timezone", "Europe/Paris"),
+            "days": out_days,
+        }
+    except requests.RequestException:
+        return _bundled_open_meteo_forecast(safe_days)

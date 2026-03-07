@@ -5,6 +5,7 @@ Endpoints:
   GET /                        → health check
   POST /map/overlay            → Sentinel-2 + CLMS overlay PNG
   POST /weather/france         → monthly weather aggregates
+  POST /weather/france/forecast → near-term 7-day forecast (Open-Meteo)
   POST /predict/yield          → yield anomaly prediction
   POST /predict/price          → 3-month price direction forecast
   POST /crops                  → available crop configs
@@ -57,7 +58,7 @@ from services.market_finance import (
     supply_demand_regime,
     ASSET_LABELS,
 )
-from services.weather_power import get_weather_monthly
+from services.weather_power import get_weather_monthly, get_open_meteo_france_forecast
 from services.faostat import get_yield_history, compute_yield_features
 from services.prices_worldbank import get_price_history, compute_price_features
 from services.agent_full import stream_agent_events
@@ -413,6 +414,12 @@ class WeatherRequest(BaseModel):
     end: str = Field(default="20241231", description="End date (yyyyMMdd)")
 
 
+class WeatherForecastRequest(BaseModel):
+    days: int = Field(default=7, ge=1, le=10, description="Forecast horizon in days")
+    lat: float = Field(default=46.603354, ge=41.0, le=51.5, description="France representative latitude")
+    lon: float = Field(default=1.888334, ge=-5.5, le=9.8, description="France representative longitude")
+
+
 class CropQueryRequest(BaseModel):
     crop: str = Field(default="wheat", description="Crop name (wheat, maize, grape)")
 
@@ -700,6 +707,13 @@ def satellite_view(
 def weather_france(req: WeatherRequest):
     """Return monthly-aggregated weather data for France (3×3 grid mean)."""
     data = get_weather_monthly(start_date=req.start, end_date=req.end)
+    return JSONResponse(content=data)
+
+
+@app.post("/weather/france/forecast")
+def weather_france_forecast(req: WeatherForecastRequest):
+    """Return near-term daily weather forecast for France from Open-Meteo."""
+    data = get_open_meteo_france_forecast(days=req.days, lat=req.lat, lon=req.lon)
     return JSONResponse(content=data)
 
 

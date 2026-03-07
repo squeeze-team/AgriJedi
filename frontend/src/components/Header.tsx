@@ -10,7 +10,10 @@ export function Header() {
       </div>
 
       <div className="flex items-center gap-2 text-sm">
-        <span className="cyber-pill">LIVE</span>
+        <span className="cyber-pill cyber-live-pill">
+          <span className="cyber-live-dot" aria-hidden="true" />
+          LIVE
+        </span>
         <span className="cyber-pill">Country: France</span>
       </div>
     </header>
