@@ -12,6 +12,7 @@ Endpoints:
   POST /yield/history          → annual yield time-series
   POST /ndvi/stats             → NDVI summary statistics
   POST /chat/stream            → LangGraph + OpenRouter streaming chatbot
+  POST /analysis/report        → structured AI risk analysis report for RiskAnalysisPanel
 
 Agent-oriented (POST JSON body, single-call):
   POST /agent/yield-analysis   → per-crop NDVI + yield forecast for a bbox
@@ -24,7 +25,7 @@ Agent-oriented (POST JSON body, single-call):
 import pandas as pd
 import json
 import asyncio
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -53,6 +54,7 @@ from services.weather_power import get_weather_monthly
 from services.faostat import get_yield_history, compute_yield_features
 from services.prices_worldbank import get_price_history, compute_price_features
 from services.agent_full import stream_agent_events
+from services.agent_full import core as agent_full_core
 
 from features.build_features import build_feature_vector
 from features.models import predict_yield, predict_price
@@ -82,6 +84,148 @@ class ChatHistoryItem(BaseModel):
 class ChatStreamRequest(BaseModel):
     message: str
     history: list[ChatHistoryItem] = []
+
+
+class AnalysisReportRequest(BaseModel):
+    bbox: str = Field(
+        default="4.67,44.71,4.97,45.01",
+        description="Bounding box string: west,south,east,north",
+    )
+    crop: str = Field(default="wheat", description="Preferred crop for analysis prompt.")
+    date: str | None = Field(
+        default=None,
+        description="Optional date range metadata from frontend (unused by agent flow).",
+    )
+    resolution: int | None = Field(
+        default=None,
+        description="Optional frontend resolution metadata (unused by agent flow).",
+        ge=100,
+        le=2000,
+    )
+
+
+def _parse_bbox_string(bbox_raw: str) -> list[float]:
+    parts = [part.strip() for part in bbox_raw.split(",")]
+    if len(parts) != 4:
+        raise HTTPException(400, "bbox must be a comma-separated string with 4 numbers")
+    try:
+        bbox = [float(part) for part in parts]
+    except ValueError as exc:
+        raise HTTPException(400, "bbox contains non-numeric values") from exc
+    west, south, east, north = bbox
+    if west >= east or south >= north:
+        raise HTTPException(400, "bbox ordering invalid: expected west<s east and south<north")
+    return bbox
+
+
+def _pick_key(payload: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in payload:
+            return payload[key]
+    return None
+
+
+def _format_section_text(value: Any) -> str:
+    if value is None:
+        return "No data available."
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or "No data available."
+    if isinstance(value, list):
+        items = [str(item).strip() for item in value if str(item).strip()]
+        if not items:
+            return "No data available."
+        return " ".join(f"{idx}. {item}" for idx, item in enumerate(items, start=1))
+    if isinstance(value, dict):
+        parts: list[str] = []
+        for key, raw in value.items():
+            if raw is None or raw == "":
+                continue
+            if isinstance(raw, list):
+                text = ", ".join(str(item) for item in raw)
+            else:
+                text = str(raw)
+            if text.strip():
+                label = key.replace("_", " ").strip()
+                parts.append(f"{label}: {text}")
+        return ". ".join(parts) if parts else "No data available."
+    return str(value)
+
+
+def _normalize_market_section(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, Any] = {}
+    for key, raw in value.items():
+        if raw is None:
+            continue
+        if isinstance(raw, (str, int, float, bool)):
+            normalized[key] = raw
+    return normalized
+
+
+def _normalize_analysis_report(raw_payload: dict[str, Any], requested_bbox: list[float]) -> dict[str, Any]:
+    geospatial = _pick_key(
+        raw_payload,
+        "Geospatial & Crop Context",
+        "Geospatial & Crop Context:",
+        "Geospatial & Crop Context：",
+    )
+    yield_assessment = _pick_key(
+        raw_payload,
+        "Yield & Vegetation Assessment",
+        "Yield & Vegetation Assessment:",
+        "Yield & Vegetation Assessment：",
+    )
+    market_section = _pick_key(
+        raw_payload,
+        "Market & Weather Risk Assessment",
+        "Market & Weather Risk Assessment:",
+        "Market & Weather Risk Assessment：",
+    )
+    bio_section = _pick_key(
+        raw_payload,
+        "Bio-monitor Interpretation",
+        "Bio-monitor Interpretation:",
+        "Bio-monitor Interpretation：",
+    )
+    trigger_section = _pick_key(
+        raw_payload,
+        "Risk Triggers to Watch (next planning horizon)",
+        "Risk Triggers to Watch (next planning horizon):",
+        "Risk Triggers to Watch (next planning horizon)：",
+    )
+
+    selected_bbox: list[float] = requested_bbox
+    if isinstance(geospatial, dict):
+        bbox_candidate = geospatial.get("bbox")
+        if (
+            isinstance(bbox_candidate, list)
+            and len(bbox_candidate) == 4
+            and all(isinstance(item, (int, float)) for item in bbox_candidate)
+        ):
+            selected_bbox = [float(item) for item in bbox_candidate]
+
+    risk_score_raw = raw_payload.get("risk_score")
+    risk_score = int(risk_score_raw) if isinstance(risk_score_raw, (int, float)) else 0
+
+    recommended_action_raw = str(raw_payload.get("recommended_action") or "").strip().lower()
+    recommended_action = recommended_action_raw if recommended_action_raw in {"sell", "hold"} else "hold"
+
+    crop_type = str(raw_payload.get("crop_type") or "wheat").strip().lower() or "wheat"
+
+    return {
+        "crop_type_in_bbox": bool(raw_payload.get("crop_type_in_bbox")),
+        "selected_bbox": selected_bbox,
+        "crop_type": crop_type,
+        "risk_score": risk_score,
+        "Geospatial & Crop Context": _format_section_text(geospatial),
+        "Yield & Vegetation Assessment": _format_section_text(yield_assessment),
+        "Market & Weather Risk Assessment": _normalize_market_section(market_section),
+        "recommended_action": recommended_action,
+        "Bio-monitor Interpretation": _format_section_text(bio_section),
+        "Risk Triggers to Watch (next planning horizon)": _format_section_text(trigger_section),
+    }
 
 
 # ─── Health check ────────────────────────────────────────────────
@@ -138,6 +282,36 @@ async def chat_stream(payload: ChatStreamRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/analysis/report")
+def analysis_report(req: AnalysisReportRequest):
+    bbox = _parse_bbox_string(req.bbox)
+    west, south, east, north = bbox
+    center_lat = round((south + north) / 2.0, 6)
+    center_lon = round((west + east) / 2.0, 6)
+    crop = (req.crop or "wheat").strip().lower() or "wheat"
+    query = (
+        f"Assess {crop} risk and selling strategy at lat: {center_lat}, lon: {center_lon}. "
+        f"Use bbox [{west}, {south}, {east}, {north}] as the target area."
+    )
+    try:
+        state = agent_full_core.run_agri_mind(user_query=query, run_mode="analysis")
+    except Exception as exc:
+        raise HTTPException(500, f"analysis_agent_failed: {exc}") from exc
+
+    advisory_raw = state.get("final_advisory")
+    parsed: dict[str, Any] = {}
+    if isinstance(advisory_raw, str) and advisory_raw.strip():
+        try:
+            payload = json.loads(advisory_raw)
+            if isinstance(payload, dict):
+                parsed = payload
+        except json.JSONDecodeError:
+            parsed = {}
+
+    normalized = _normalize_analysis_report(parsed, bbox)
+    return JSONResponse(content=normalized)
 
 
 # ─── Available crops ─────────────────────────────────────────────

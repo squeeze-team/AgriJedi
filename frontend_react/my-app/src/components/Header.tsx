@@ -1,11 +1,15 @@
 export function Header() {
   return (
-    <header className="flex flex-wrap items-center gap-4 bg-blue-600 px-5 py-4 text-white shadow-sm md:px-7">
-      <h1 className="text-xl font-bold">AgriIntel</h1>
+    <header className="cyber-header flex flex-wrap items-center justify-between gap-4 px-5 py-4 md:px-7">
+      <div className="flex items-center gap-3">
+        <span className="cyber-badge">FRANCE NODE</span>
+        <h1 className="cyber-title text-xl font-bold">AgroMind</h1>
+      </div>
 
-      <span className="text-sm">
-        Country: <strong>France</strong>
-      </span>
+      <div className="flex items-center gap-2 text-sm">
+        <span className="cyber-pill">LIVE</span>
+        <span className="cyber-pill">Country: France</span>
+      </div>
     </header>
   );
 }

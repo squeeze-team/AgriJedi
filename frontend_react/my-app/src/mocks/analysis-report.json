@@ -1,0 +1,22 @@
+{
+  "crop_type_in_bbox": true,
+  "selected_bbox": [4.67, 44.71, 4.97, 45.01],
+  "crop_type": "wheat",
+  "risk_score": 3,
+  "Geospatial & Crop Context": "The selected bounding box (4.67°E–4.97°E, 44.71°N–45.01°N) falls within the northern Rhône Valley of France, a key winter-wheat production zone in the Drôme / Ardèche departments. Sentinel-2 classification confirms wheat as the dominant crop at ~38 % land cover, followed by grassland (22 %) and maize (15 %). Soil type is predominantly calcareous clay-loam with moderate organic matter (1.8–2.2 %), well suited for rainfed cereals.",
+  "Yield & Vegetation Assessment": "Current NDVI mean for wheat pixels is 0.62 (median 0.64), which is 4 % below the 5-year June baseline of 0.65. The NDVI interquartile range (0.55–0.71) suggests moderate spatial heterogeneity — likely reflecting differences in sowing date and micro-topography. Yield proxy index stands at 0.96, indicating a slight underperformance relative to trend. The 2025 yield forecast model projects 6.45 t/ha, representing a −2.1 % anomaly vs. the 5-year departmental average of 6.59 t/ha.",
+  "Market & Weather Risk Assessment": {
+    "market_focus_crop": "wheat",
+    "latest_price": 228.0,
+    "trend_direction": "rising",
+    "period_change_pct": 3.5,
+    "weather_risk_score": 0.42,
+    "soil_moisture_pct": 68.3,
+    "precipitation_mm": 18.7,
+    "heat_risk": 0.60,
+    "flood_risk": 0.12
+  },
+  "recommended_action": "hold",
+  "Bio-monitor Interpretation": "Chlorophyll fluorescence proxy (SIF) from TROPOMI shows a mild decline (−6 %) over the past 2 dekads, consistent with early moisture stress but not yet indicating irreversible damage. Leaf Area Index (LAI) derived from Sentinel-2 biophysical processor is 3.8 m²/m², within the normal range for this growth stage (BBCH 65–69, anthesis). No anomalous pest or disease signatures detected in spectral residuals.",
+  "Risk Triggers to Watch (next planning horizon)": "1) Consecutive days > 32 °C during grain-fill (current forecast: 4–5 days in late June). 2) Cumulative July rainfall < 25 mm would push drought stress into the critical category. 3) MATIF Sep contract breaking above €240/t could signal a short-covering rally — consider forward-selling 30 % of expected harvest at that level. 4) Any escalation in Black Sea export restrictions would further tighten EU balance sheets."
+}

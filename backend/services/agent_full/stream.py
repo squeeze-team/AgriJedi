@@ -20,6 +20,7 @@ _STAGE_LABEL = {
     "geocode_dispatch": "Dispatch",
     "yield_analysis_agent": "Yield analysis",
     "market_overview_agent": "Market overview",
+    "crop_report_agent": "Crop report",
     "climate_agent": "Climate",
     "bio_monitor": "Bio monitor",
     "climate_priority": "Climate priority",
@@ -122,7 +123,7 @@ async def stream_agent_events(user_query: str) -> AsyncIterator[dict[str, Any]]:
         return
     initial_state: core.AgriState = {
         "user_query": user_query,
-        "run_mode": "interactive",
+        "run_mode": "chat",
         "is_emergency": False,
     }
 

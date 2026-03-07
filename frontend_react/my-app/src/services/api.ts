@@ -253,6 +253,65 @@ export async function fetchSatelliteLayerImage(
   return URL.createObjectURL(blob);
 }
 
+// ──────────────────────────────────────────────
+// Analysis Report (AI Agent risk analysis)
+// ──────────────────────────────────────────────
+export type RecommendedAction = 'sell' | 'hold';
+
+export interface MarketWeatherRisk {
+  market_focus_crop?: string;
+  latest_price?: number;
+  trend_direction?: string;
+  period_change_pct?: number;
+  weather_risk_score?: number;
+  soil_moisture_pct?: number;
+  precipitation_mm?: number;
+  heat_risk?: number;
+  flood_risk?: number;
+  [key: string]: string | number | undefined;
+}
+
+export interface AnalysisReport {
+  crop_type_in_bbox: boolean;
+  selected_bbox: [number, number, number, number];
+  crop_type: string;
+  risk_score: number;                       // 1-5
+  'Geospatial & Crop Context': string;
+  'Yield & Vegetation Assessment': string;
+  'Market & Weather Risk Assessment': MarketWeatherRisk;
+  recommended_action: RecommendedAction;
+  'Bio-monitor Interpretation': string;
+  'Risk Triggers to Watch (next planning horizon)': string;
+  [key: string]: string | number | boolean | number[] | MarketWeatherRisk | null;
+}
+
+export interface AnalysisReportRequest {
+  bbox: string;
+  crop?: Crop;
+  date?: string;
+  resolution?: number;
+}
+
+export async function fetchAnalysisReport(
+  bbox: string,
+  options?: Omit<AnalysisReportRequest, 'bbox'>,
+): Promise<AnalysisReport> {
+  const response = await fetch(`${API_BASE}/analysis/report`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      bbox,
+      crop: options?.crop,
+      date: options?.date,
+      resolution: options?.resolution,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return (await response.json()) as AnalysisReport;
+}
+
 function demoWeatherData(): WeatherData {
   return {
     months: [

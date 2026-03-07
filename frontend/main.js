@@ -33,7 +33,7 @@ const cropWms = L.tileLayer.wms(CLMS_WMS_URL, {
 
 L.control.layers(
   {},
-  { "Crop Types 2021 (CLMS)": cropWms },
+  { "Crop Types (CLMS)": cropWms },
   { collapsed: false }
 ).addTo(map);
 
@@ -42,7 +42,7 @@ const legendDiv = L.control({ position: "bottomright" });
 legendDiv.onAdd = function () {
   const div = L.DomUtil.create("div", "map-legend");
   div.innerHTML =
-    '<h4>Crop Types 2021</h4>' +
+    '<h4>Crop Types</h4>' +
     '<img src="' + CLMS_WMS_URL +
     '?service=WMS&request=GetLegendGraphic&version=1.3.0&format=image/png&layer=' +
     encodeURIComponent(CLMS_LAYER) + '" alt="legend" />';

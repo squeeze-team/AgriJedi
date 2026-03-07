@@ -45,13 +45,13 @@ export function SatelliteSection({
   return (
     <section className="mx-auto w-full max-w-[1400px] px-5 pb-7 md:px-7">
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <h2 className="text-lg font-bold text-slate-800">Satellite Imagery - Sentinel-2 + CLMS</h2>
+        <h2 className="text-lg font-bold tracking-[0.06em] text-slate-100">Satellite Imagery - Sentinel-2 + CLMS</h2>
 
-        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-300">
           <label className="flex items-center gap-1">
             Region:
             <select
-              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800"
+              className="cyber-control rounded-md border px-2 py-1 text-sm"
               onChange={(event) => onBboxChange(event.target.value)}
               value={presets.some((preset) => preset.value === bbox) ? bbox : 'custom'}
             >
@@ -67,7 +67,7 @@ export function SatelliteSection({
           <label className="flex items-center gap-1">
             BBox:
             <input
-              className="w-[230px] rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800"
+              className="cyber-control w-[230px] rounded-md border px-2 py-1 text-sm"
               value={bbox}
               onChange={(event) => onBboxChange(event.target.value)}
             />
@@ -76,7 +76,7 @@ export function SatelliteSection({
           <label className="flex items-center gap-1">
             Date:
             <input
-              className="w-[200px] rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800"
+              className="cyber-control w-[200px] rounded-md border px-2 py-1 text-sm"
               value={date}
               onChange={(event) => onDateChange(event.target.value)}
             />
@@ -85,7 +85,7 @@ export function SatelliteSection({
           <button
             type="button"
             onClick={onLoad}
-            className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white transition hover:bg-blue-700"
+            className="cyber-action rounded-md px-4 py-1.5 text-sm font-semibold text-white transition"
           >
             Load
           </button>
@@ -105,9 +105,9 @@ export function SatelliteSection({
           return (
             <article key={panel.layer} className="panel-card overflow-hidden">
               <h3 className="panel-title">{panel.title}</h3>
-              <div className="relative flex min-h-[320px] items-center justify-center bg-slate-100">
+              <div className="relative flex min-h-[320px] items-center justify-center bg-slate-950/90">
                 {(view.status === 'idle' || view.status === 'loading' || view.status === 'error') && (
-                  <div className="px-4 text-center text-sm text-slate-500">{placeholderText}</div>
+                  <div className="px-4 text-center text-sm text-slate-400">{placeholderText}</div>
                 )}
                 {view.src && (
                   <img

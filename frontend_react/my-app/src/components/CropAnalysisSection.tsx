@@ -8,15 +8,15 @@ interface CropAnalysisSectionProps {
 
 function getYieldBadgeClass(index: number | null) {
   if (index == null) {
-    return 'bg-slate-100 text-slate-500';
+    return 'bg-slate-700/40 text-slate-300';
   }
   if (index >= 1.02) {
-    return 'bg-green-50 text-green-700';
+    return 'bg-emerald-400/15 text-emerald-300';
   }
   if (index >= 0.98) {
-    return 'bg-amber-50 text-amber-700';
+    return 'bg-amber-300/15 text-amber-200';
   }
-  return 'bg-red-50 text-red-700';
+  return 'bg-rose-400/15 text-rose-300';
 }
 
 export function CropAnalysisSection({ data, isLoading, error }: CropAnalysisSectionProps) {
@@ -28,20 +28,20 @@ export function CropAnalysisSection({ data, isLoading, error }: CropAnalysisSect
 
   return (
     <section className="mx-auto w-full max-w-[1400px] px-5 pb-7 md:px-7">
-      <h2 className="mb-4 text-lg font-bold text-slate-800">Per-Crop NDVI Analysis & Yield Proxy</h2>
+      <h2 className="mb-4 text-lg font-bold tracking-[0.06em] text-slate-100">Per-Crop NDVI Analysis & Yield Proxy</h2>
 
-      {isLoading && <div className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-500">Analysing crop distribution and NDVI...</div>}
+      {isLoading && <div className="cyber-note p-5 text-sm text-slate-300">Analysing crop distribution and NDVI...</div>}
 
-      {!isLoading && error && <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">Analysis failed: {error}. Is the backend running?</div>}
+      {!isLoading && error && <div className="rounded-xl border border-rose-500/40 bg-rose-950/40 p-5 text-sm text-rose-200">Analysis failed: {error}. Is the backend running?</div>}
 
       {!isLoading && !error && !data && (
-        <div className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
+        <div className="cyber-note p-5 text-sm text-slate-300">
           Load satellite imagery above to run per-crop analysis.
         </div>
       )}
 
       {!isLoading && !error && data && entries.length === 0 && (
-        <div className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-500">
+        <div className="cyber-note p-5 text-sm text-slate-300">
           {data.error || 'No crop data found for this region.'}
         </div>
       )}
@@ -58,27 +58,27 @@ export function CropAnalysisSection({ data, isLoading, error }: CropAnalysisSect
               return (
                 <article key={group} className="panel-card p-4">
                   <div className="mb-1 flex items-center justify-between gap-2">
-                    <h3 className="text-sm font-bold text-slate-800">{title}</h3>
-                    <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
+                    <h3 className="text-sm font-bold uppercase tracking-[0.08em] text-slate-100">{title}</h3>
+                    <span className="rounded-full bg-cyan-400/15 px-2 py-0.5 text-xs font-semibold text-cyan-200">
                       {item.area_pct}% area
                     </span>
                   </div>
 
-                  <p className="mb-2 text-xs text-slate-500">{item.label}</p>
+                  <p className="mb-2 text-xs text-slate-400">{item.label}</p>
 
                   <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-                    <dt className="text-slate-500">NDVI mean</dt>
-                    <dd className="text-right font-semibold text-slate-800">{item.ndvi_mean}</dd>
-                    <dt className="text-slate-500">NDVI median</dt>
-                    <dd className="text-right font-semibold text-slate-800">{item.ndvi_median}</dd>
-                    <dt className="text-slate-500">NDVI s</dt>
-                    <dd className="text-right font-semibold text-slate-800">{item.ndvi_std}</dd>
-                    <dt className="text-slate-500">NDVI IQR</dt>
-                    <dd className="text-right font-semibold text-slate-800">
+                    <dt className="text-slate-400">NDVI mean</dt>
+                    <dd className="text-right font-semibold text-slate-100">{item.ndvi_mean}</dd>
+                    <dt className="text-slate-400">NDVI median</dt>
+                    <dd className="text-right font-semibold text-slate-100">{item.ndvi_median}</dd>
+                    <dt className="text-slate-400">NDVI s</dt>
+                    <dd className="text-right font-semibold text-slate-100">{item.ndvi_std}</dd>
+                    <dt className="text-slate-400">NDVI IQR</dt>
+                    <dd className="text-right font-semibold text-slate-100">
                       {item.ndvi_p25} - {item.ndvi_p75}
                     </dd>
-                    <dt className="text-slate-500">Pixels</dt>
-                    <dd className="text-right font-semibold text-slate-800">{item.pixel_count.toLocaleString()}</dd>
+                    <dt className="text-slate-400">Pixels</dt>
+                    <dd className="text-right font-semibold text-slate-100">{item.pixel_count.toLocaleString()}</dd>
                   </dl>
 
                   <div className="mt-2">
@@ -88,21 +88,21 @@ export function CropAnalysisSection({ data, isLoading, error }: CropAnalysisSect
                   </div>
 
                   {yp && (
-                    <div className="mt-3 rounded-md border-l-4 border-blue-600 bg-slate-50 p-3">
-                      <div className="text-xs font-semibold text-slate-800">{yp.target_year} Yield Forecast</div>
-                      <div className="mt-1 text-2xl font-extrabold text-blue-700">
+                    <div className="mt-3 rounded-md border border-slate-700 bg-slate-950/70 p-3">
+                      <div className="text-xs font-semibold text-slate-200">{yp.target_year} Yield Forecast</div>
+                      <div className="mt-1 text-2xl font-extrabold text-cyan-300">
                         {yp.predicted_yield_t_ha} t/ha
-                        <span className={`ml-2 text-xs font-semibold ${yp.anomaly_vs_5yr_pct >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                        <span className={`ml-2 text-xs font-semibold ${yp.anomaly_vs_5yr_pct >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
                           {yp.anomaly_vs_5yr_pct >= 0 ? '+' : ''}
                           {yp.anomaly_vs_5yr_pct}% vs 5yr avg
                         </span>
                       </div>
-                      <div className="mt-1 text-[11px] text-slate-500">
+                      <div className="mt-1 text-[11px] text-slate-400">
                         5yr avg: {yp.avg_5yr} t/ha | Trend: {yp.trend >= 0 ? '+' : ''}
                         {yp.trend} t/ha/yr
                       </div>
-                      {histValues && <div className="mt-1 text-[11px] text-slate-500">History: {histValues} t/ha</div>}
-                      <div className="mt-1 text-[11px] text-slate-500">
+                      {histValues && <div className="mt-1 text-[11px] text-slate-400">History: {histValues} t/ha</div>}
+                      <div className="mt-1 text-[11px] text-slate-400">
                         {departments ? `Departements: ${departments} | ` : ''}
                         Confidence: {(yp.confidence * 100).toFixed(0)}%
                       </div>
@@ -113,7 +113,7 @@ export function CropAnalysisSection({ data, isLoading, error }: CropAnalysisSect
             })}
           </div>
 
-          <div className="pt-2 text-xs text-slate-500">
+          <div className="pt-2 text-xs text-slate-400">
             Region: [{data.bbox}] - {data.total_classified_pixels.toLocaleString()} classified pixels at {data.resolution_px} - Source:{' '}
             {data.item_id || 'bundled'}
           </div>

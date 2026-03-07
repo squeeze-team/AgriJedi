@@ -5,6 +5,7 @@ import { PriceChartPanel } from './components/PriceChartPanel';
 import { CropAnalysisSection } from './components/CropAnalysisSection';
 import { ChatBubble } from './components/ChatBubble';
 import type { CropLegendItem } from './components/CropLegend';
+import { RiskAnalysisPanel } from './components/RiskAnalysisPanel';
 import { SatelliteSection } from './components/SatelliteSection';
 import { WeatherChartPanel } from './components/WeatherChartPanel';
 import {
@@ -27,6 +28,7 @@ const satelliteLayers: Array<Exclude<SatelliteLayer, 'false_color'>> = ['rgb', '
 
 const defaultBbox = '4.67,44.71,4.97,45.01';
 const defaultDate = '2025-06-01/2025-09-01';
+let hasTriggeredInitialLoad = false;
 
 const groupLegendColor: Record<string, string> = {
   maize: '#f4de7a',
@@ -153,6 +155,14 @@ function App() {
     await loadSatelliteViewsBy(bbox, satDate);
   }
 
+  useEffect(() => {
+    if (hasTriggeredInitialLoad) {
+      return;
+    }
+    hasTriggeredInitialLoad = true;
+    void loadSatelliteViewsBy(defaultBbox, defaultDate);
+  }, []);
+
   function setLayerStatus(layer: SatelliteLayer, status: SatelliteViewState['status']) {
     setSatelliteViews((previous) => ({
       ...previous,
@@ -164,7 +174,7 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800">
+    <div className="dashboard-shell min-h-screen text-slate-100">
       <Header />
 
       <main className="mx-auto grid w-full max-w-[1400px] grid-cols-1 gap-4 px-5 py-5 md:px-7 lg:grid-cols-2">
@@ -186,6 +196,7 @@ function App() {
       />
 
       <CropAnalysisSection data={analysisData} isLoading={analysisLoading} error={analysisError} />
+      <RiskAnalysisPanel bbox={bbox} />
       <ChatBubble
         onAutofillSatellite={({ bbox: nextBbox, dateRange }) => {
           void loadSatelliteViewsBy(nextBbox, dateRange);
