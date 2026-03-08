@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
+import type { Rectangle as LeafletRectangle } from 'leaflet';
 import { MapContainer, Rectangle, TileLayer, WMSTileLayer, useMap } from 'react-leaflet';
 import { CropLegend, type CropLegendItem } from './CropLegend';
 
@@ -22,13 +23,20 @@ function parseBboxToBounds(bbox: string): Bounds | null {
   return [[south, west], [north, east]];
 }
 
-function AutoFitBounds({ bounds }: { bounds: Bounds | null }) {
+function AutoFitBounds({ bounds, bboxKey }: { bounds: Bounds | null; bboxKey: string }) {
   const map = useMap();
+  const lastAppliedKeyRef = useRef<string>('');
 
   useEffect(() => {
     if (!bounds) {
       return;
     }
+    if (bboxKey === lastAppliedKeyRef.current) {
+      return;
+    }
+
+    lastAppliedKeyRef.current = bboxKey;
+
     const fitToBounds = () => {
       const size = map.getSize();
       const verticalPadding = Math.round(size.y * 0.1);
@@ -46,20 +54,46 @@ function AutoFitBounds({ bounds }: { bounds: Bounds | null }) {
 
     map.invalidateSize();
     fitToBounds();
-  }, [map, bounds]);
+  }, [map, bounds, bboxKey]);
 
   return null;
 }
 
 export function MapPanel({ bbox, legendItems }: MapPanelProps) {
-  const bounds = parseBboxToBounds(bbox);
+  const bounds = useMemo(() => parseBboxToBounds(bbox), [bbox]);
+  const rectangleRef = useRef<LeafletRectangle | null>(null);
+  const bboxKey = useMemo(() => {
+    const normalized = bbox
+      .split(',')
+      .map((value) => value.trim())
+      .join(',');
+    return normalized;
+  }, [bbox]);
+
+  useEffect(() => {
+    if (!bounds) {
+      return;
+    }
+    let rafId = 0;
+    const animate = (timestamp: number) => {
+      const layer = rectangleRef.current;
+      if (layer) {
+        // Marching-ants effect for bbox stroke, robust across production builds.
+        const offset = -((timestamp * 0.012) % 28);
+        layer.setStyle({ dashOffset: `${offset.toFixed(1)}` });
+      }
+      rafId = window.requestAnimationFrame(animate);
+    };
+    rafId = window.requestAnimationFrame(animate);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [bboxKey, bounds]);
 
   return (
     <section className="panel-card">
       <div className="panel-title">Regional Crop Distribution</div>
       <div className="relative h-[420px] w-full">
-        <MapContainer center={[46.6, 2.5]} zoom={6} className="h-full w-full">
-          <AutoFitBounds bounds={bounds} />
+        <MapContainer center={[46.6, 2.5]} zoom={6} preferCanvas={false} className="h-full w-full">
+          <AutoFitBounds bounds={bounds} bboxKey={bboxKey} />
           <TileLayer
             url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
             attribution="&copy; OpenStreetMap contributors &copy; CARTO"
@@ -74,6 +108,7 @@ export function MapPanel({ bbox, legendItems }: MapPanelProps) {
           />
           {bounds && (
             <Rectangle
+              ref={rectangleRef}
               bounds={bounds}
               pathOptions={{
                 className: 'cyber-bbox-rect',
