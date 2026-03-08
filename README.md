@@ -32,47 +32,45 @@ AgroMind connect these signals into a **single AI-driven intelligence system**:
 
 ---
 
-## Quick Start
-
-### 1. Backend
+## How to Run the Code
 
 ```bash
-cd backend
-pip install -r requirements.txt
-cp .env.example .env          # add your OPENROUTER_API_KEY
-python app.py                 # runs on http://localhost:8000
+cp .env.example .env
+# edit .env and add your OPENROUTER_API_KEY / model settings
+# if you want to use openai endpoint, set the endpoint to: OPENAI_API_URL=https://api.openai.com/v1/chat/completions
+
+docker compose up --build -d
+docker compose logs -f agrimaster
 ```
 
-### 2. Frontend (React)
-
-```bash
-cd frontend_react/my-app
-npm install
-npm run dev                   # runs on http://localhost:5173
-```
-
-The legacy `frontend/index.html` still works standalone with demo data.
+Open: `http://localhost:8000`
 
 ---
 
 ## API Endpoints
 
-All data endpoints use **POST with JSON body**.
+All data endpoints use **POST with JSON body** unless otherwise noted.
 
 | Endpoint | Description |
 |---|---|
-| `GET /` | Health check |
+| `GET /` | Serves frontend SPA (or fallback service status) |
+| `GET /health` | Health check |
+| `POST /config/feature-flags` | Frontend feature flags + usage/limit counters |
 | `POST /crops` | List available crops |
 | `POST /map/overlay` | Sentinel-2 + CLMS composite PNG |
 | `POST /satellite/view` | Satellite layer (RGB / false-color / NDVI / overlay) |
 | `POST /weather/france` | Monthly weather aggregates (NASA POWER) |
+| `POST /weather/france/forecast` | 7-day weather forecast (Open-Meteo) |
 | `POST /predict/yield` | Yield anomaly prediction |
 | `POST /predict/price` | 3-month price direction forecast |
 | `POST /prices/history` | Monthly commodity price time-series |
 | `POST /yield/history` | Annual yield time-series |
 | `POST /ndvi/stats` | NDVI summary statistics |
+| `POST /analysis/crop-ndvi` | Per-crop NDVI analysis for selected bbox/date |
 | `POST /chat/stream` | LangGraph multi-agent streaming chatbot (SSE) |
 | `POST /analysis/report` | Structured AI risk analysis for a bbox |
+| `POST /events/gdacs/europe` | GDACS hazard feed filtered to Europe |
+| `POST /events/gdacs/france` | Backward-compatible alias endpoint |
 
 **Agent-oriented endpoints** (optimized for LLM consumption):
 
@@ -83,6 +81,7 @@ All data endpoints use **POST with JSON body**.
 | `POST /agent/market-signals` | Futures, FX, oil, rates, WASDE signals |
 | `POST /agent/system-prompt` | Macro context blob for LLM system prompt |
 | `POST /market/weekly-chart` | Weekly price series for frontend charts |
+| `POST /agent/crop-report` | Aggregated crop report for a selected bbox |
 
 ---
 
@@ -105,7 +104,11 @@ All data endpoints use **POST with JSON body**.
 ## Project Structure
 
 ```
-AgriJedi/
+ArgiMaster/
+├── Dockerfile                        # 2-stage build (frontend build -> FastAPI runtime)
+├── docker-compose.yml                # agrimaster + redis
+├── .env.example                      # sample env values
+│
 ├── backend/
 │   ├── app.py                          # FastAPI application (all endpoints)
 │   ├── config.py                       # Crop configs, API URLs, constants
@@ -133,7 +136,7 @@ AgriJedi/
 │   ├── data/                           # Bundled market data & system prompts
 │   └── scripts/                        # Data download & test utilities
 │
-├── frontend_react/my-app/              # React + Vite + TypeScript frontend
+├── frontend/                            # React + Vite + TypeScript frontend
 │   └── src/
 │       ├── App.tsx                     # Main dashboard layout
 │       └── components/
@@ -145,15 +148,7 @@ AgriJedi/
 │           ├── PriceChartPanel.tsx     # Commodity price charts
 │           └── WeatherChartPanel.tsx   # Temperature & precipitation charts
 │
-├── frontend/                           # Legacy standalone HTML/JS demo
-│   ├── index.html
-│   └── main.js
-│
-├── agent/                              # Standalone agent (external orchestration)
-│   ├── main.py                         # 2100+ line full agent with LangGraph
-│   └── AGENT_API.md                    # Agent API reference documentation
-│
-└── dev_docs/                           # Design docs & prototypes
+└── archived/agent/                      # Archived standalone full agent code
 ```
 
 ---
