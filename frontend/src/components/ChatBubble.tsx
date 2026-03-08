@@ -65,7 +65,10 @@ export function ChatBubble({ onAutofillSatellite }: ChatBubbleProps) {
       id: 'welcome',
       sender: 'Agri Assistant',
       direction: 'incoming',
-      message: 'Hi, I am AgroMind Assistant. Ask me anything about crops and agricultural conditions in France.',
+      message: `Hi, I am AgroMind Assistant. Ask me anything about crops and agricultural conditions in France.
+Try these examples:
+- Help me assess the grape in Nice
+- What's the weather in Rhone Valley`,
     },
   ]);
 

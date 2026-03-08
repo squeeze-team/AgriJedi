@@ -400,13 +400,14 @@ body {
 
 .chat-markdown {
   font-size: 14px;
-  line-height: 1.45;
+  line-height: 1.52;
   color: inherit;
   word-break: break-word;
+  white-space: normal;
 }
 
 .chat-markdown p {
-  margin: 0 0 0.45rem;
+  margin: 0 0 0.52rem;
 }
 
 .chat-markdown p:last-child {
@@ -415,12 +416,30 @@ body {
 
 .chat-markdown ul,
 .chat-markdown ol {
-  margin: 0.35rem 0 0.45rem 1.1rem;
+  margin: 0.26rem 0 0.4rem 1.05rem;
   padding: 0;
+  list-style-position: outside;
+}
+
+.chat-markdown ul {
+  list-style-type: disc;
+}
+
+.chat-markdown ol {
+  list-style-type: decimal;
 }
 
 .chat-markdown li {
-  margin: 0.2rem 0;
+  margin: 0.14rem 0;
+  line-height: 1.42;
+}
+
+.chat-markdown li > p {
+  margin: 0;
+}
+
+.chat-markdown li::marker {
+  color: #93c5fd;
 }
 
 .chat-markdown code {
